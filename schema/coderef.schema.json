@@ -1,712 +1,594 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://helly25.github.io/coderef/schema/v1.json",
-  "title": "coderef configuration",
-  "description": "Configuration schema for .coderef.jsonc / .config/coderef.jsonc files. Narrative reference: DESIGN.md §7 in the coderef repository. This schema is an informative subset of the full design — fields tagged for v0.2+ are accepted by editor autocomplete but may not be honoured by every runtime version.",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Config",
+  "description": "Top-level coderef configuration. See `DESIGN.md` §7.2 / §7.3.\n\n`IndexMap` is used in place of `HashMap` so that pattern declaration order is preserved — relevant for tie-breaking when two patterns share the same `priority` (DESIGN.md §5.5, §9.2).",
   "type": "object",
   "properties": {
     "$schema": {
-      "type": "string",
-      "format": "uri",
-      "description": "Schema URL. Recommended for editor autocomplete."
+      "description": "JSON Schema URL for editor autocomplete. Ignored by the engine.",
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "variables": {
-      "$ref": "#/$defs/Variables"
-    },
-    "defaults": {
-      "$ref": "#/$defs/ConfigDefaults"
-    },
-    "patterns": {
+      "description": "User-defined variables (`${config:variables.x}`). See `DESIGN.md` §8.3.",
       "type": "object",
-      "description": "Map of pattern id → pattern definition. See DESIGN.md §5.",
-      "additionalProperties": {
-        "$ref": "#/$defs/Pattern"
-      }
-    },
-    "languages": {
-      "type": "object",
-      "description": "User overrides to the built-in language table (DESIGN.md §7.5). Keys are language ids; null deletes a built-in.",
-      "additionalProperties": {
-        "anyOf": [
-          { "$ref": "#/$defs/LanguageDef" },
-          { "type": "null" }
-        ]
-      }
-    },
-    "blame": {
-      "$ref": "#/$defs/BlameConfig"
-    },
-    "verification": {
-      "$ref": "#/$defs/VerificationDefaults"
-    },
-    "networkProfiles": {
-      "type": "object",
-      "additionalProperties": {
-        "$ref": "#/$defs/NetworkProfile"
-      }
-    },
-    "profileSelection": {
-      "$ref": "#/$defs/ProfileSelection"
-    },
-    "submodules": {
-      "$ref": "#/$defs/SubmodulesConfig"
-    },
-    "concurrency": {
-      "$ref": "#/$defs/ConcurrencyConfig"
-    },
-    "integrity": {
-      "$ref": "#/$defs/IntegrityConfig"
+      "additionalProperties": true
     },
     "ignore": {
+      "description": "Gitignore-style globs to exclude from scanning, applied repo-wide. See `DESIGN.md` §7.2.",
       "type": "array",
-      "items": { "type": "string" },
-      "description": "Gitignore-style globs to exclude from scanning, applied repo-wide."
+      "items": {
+        "type": "string"
+      }
+    },
+    "patterns": {
+      "description": "Map of pattern id → pattern definition. See `DESIGN.md` §5, §10.",
+      "default": {},
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/definitions/Pattern"
+      }
     },
     "workspaceRoot": {
-      "type": "string",
-      "description": "Override the auto-detected workspace root. Supports variables."
+      "description": "Override the auto-detected workspace root. Supports variables.",
+      "type": [
+        "string",
+        "null"
+      ]
     }
   },
-  "required": ["patterns"],
   "additionalProperties": false,
-
-  "$defs": {
-    "Severity": {
-      "type": "string",
-      "enum": ["error", "warning", "info", "hint", "off"],
-      "description": "Diagnostic severity. See DESIGN.md §9.1."
-    },
-
-    "Variables": {
-      "type": "object",
-      "description": "User-defined variables and defaults for built-in namespaces. See DESIGN.md §8.3, §8.5.",
-      "properties": {
-        "defaults": {
-          "type": "object",
-          "description": "Fallback values for `env:`, `git:`, `blame:` namespaces.",
-          "additionalProperties": true
-        }
-      },
-      "additionalProperties": true
-    },
-
-    "ConfigDefaults": {
-      "type": "object",
-      "description": "Config-wide defaults applied when a pattern omits its own. See DESIGN.md §5.4.2.",
-      "properties": {
-        "prefix": { "$ref": "#/$defs/PrefixPolicy" }
-      },
-      "additionalProperties": true
-    },
-
+  "definitions": {
     "Pattern": {
+      "description": "One reference pattern. See `DESIGN.md` §5.1, §5.3, §7.3.\n\nMany fields are tagged for later versions; they are accepted by the schema and stored on `Pattern` but not exercised by the v0.1 engine.",
       "type": "object",
-      "description": "A reference pattern. The combination of fields varies by `kind` — see DESIGN.md §5.1, §5.2, §10.3.",
+      "required": [
+        "regex"
+      ],
       "properties": {
         "kind": {
-          "type": "string",
-          "enum": ["url", "local", "ifchange", "command"],
+          "description": "Resolver kind. Defaults to `Url`. See `DESIGN.md` §5.2.",
           "default": "url",
-          "description": "Resolver kind. `url` and `local` ship in v0.1; `ifchange` in v0.2; `command` in the post-v0.4 backlog."
+          "allOf": [
+            {
+              "$ref": "#/definitions/PatternKind"
+            }
+          ]
         },
         "regex": {
-          "type": "string",
-          "description": "ECMAScript-compatible regex with named captures. See DESIGN.md §5.1."
+          "description": "`fancy-regex`-compatible regex with named captures. See §5.1.",
+          "type": "string"
         },
         "flags": {
-          "type": "string",
-          "default": "g",
-          "description": "Regex flags. `g` is always applied; this field adds others (e.g. `i`, `m`, `s`, `u`)."
+          "description": "Regex flags applied on top of the always-on `g` mode.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "target": {
-          "type": "string",
-          "description": "Single-target URL or local path. Mutually exclusive with `targets`. See DESIGN.md §5.1."
+          "description": "Single-target shorthand (v0.1). Mutually exclusive with `targets`.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "targets": {
+          "description": "Multi-target list (v0.3+). See `DESIGN.md` §5.3.1.",
           "type": "array",
-          "description": "Multi-target list (v0.3). Mutually exclusive with `target`. See DESIGN.md §5.3.1.",
-          "items": { "$ref": "#/$defs/TargetSpec" }
-        },
-        "targetsDefaults": {
-          "type": "object",
-          "description": "Shared defaults merged into each entry of `targets[]`. v0.3.",
-          "additionalProperties": true
-        },
-        "canonicalForm": {
-          "type": "string",
-          "description": "Explicit canonical form for cross-pattern resolution (DESIGN.md §11.5)."
+          "items": {
+            "$ref": "#/definitions/TargetSpec"
+          }
         },
         "title": {
-          "type": "string",
-          "description": "Title template for hover/link labels. Supports variables."
+          "description": "Hover / link title template. Supports variables.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "priority": {
-          "type": "integer",
+          "description": "Priority for tie-breaking overlapping matches. Default 0. See `DESIGN.md` §5.5, §9.2.",
           "default": 0,
-          "description": "Tie-breaker for overlapping matches. Higher wins. See DESIGN.md §5.5, §9.2."
+          "type": "integer",
+          "format": "int32"
         },
         "category": {
-          "type": "string",
-          "description": "Semantic category (DESIGN.md §5.7). Built-ins: files, people, tickets, standards, urls, coupled-change, other. User-defined values are accepted.",
-          "examples": ["files", "people", "tickets", "standards", "urls", "coupled-change", "other"]
-        },
-        "style": {
-          "$ref": "#/$defs/StyleSpec"
-        },
-        "uniqueness": {
-          "$ref": "#/$defs/UniquenessSpec"
+          "description": "Semantic category (v0.2; DESIGN.md §5.7). Free-form string; validated against the built-in + user-defined category set at engine load.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "scope": {
-          "$ref": "#/$defs/ScopeConfig"
+          "description": "Scoping rules: where this pattern is applied.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ScopeConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "actions": {
-          "$ref": "#/$defs/ActionsConfig"
+          "description": "Per-action overrides.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ActionsConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "verify": {
-          "oneOf": [
-            { "type": "boolean" },
-            { "$ref": "#/$defs/VerifyToggle" }
-          ],
-          "description": "Shorthand for actions.verify on/off (boolean) or a full toggle object."
-        },
-        "upgrade": {
-          "$ref": "#/$defs/UpgradeConfig"
-        },
-        "unverified": {
-          "$ref": "#/$defs/UnverifiedConfig"
-        },
-        "checksums": {
-          "type": "object",
-          "description": "Checksum-mode opt-in (post-v0.4 backlog; DESIGN.md §10.14).",
-          "properties": {
-            "trackByDefault": { "type": "boolean" }
-          }
-        },
-        "severity": {
-          "type": "object",
-          "description": "Per-check severity overrides. Keys are check names (e.g. `broken`, `commitMessageMissing`); values are `Severity`.",
-          "additionalProperties": { "$ref": "#/$defs/Severity" }
+          "description": "Shorthand verify toggle. Either a boolean or a full `VerifyToggle`.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/VerifyToggle"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "resolve": {
-          "$ref": "#/$defs/LocalResolveConfig"
-        },
-        "ifChange": {
-          "$ref": "#/$defs/IfChangeMarker"
-        },
-        "thenChange": {
-          "$ref": "#/$defs/ThenChangeMarker"
-        },
-        "label": {
-          "$ref": "#/$defs/LabelMarkers"
-        },
-        "block": {
-          "$ref": "#/$defs/IfChangeBlockConfig"
-        },
-        "composable": {
-          "type": "boolean",
-          "default": false,
-          "description": "Permit Shape C composable ids (DESIGN.md §10.7; v0.4 for ifchange patterns)."
-        }
-      },
-      "required": ["regex"],
-      "additionalProperties": false
-    },
-
-    "TargetSpec": {
-      "type": "object",
-      "description": "One target in a multi-target pattern (DESIGN.md §5.3.1, v0.3).",
-      "properties": {
-        "label": { "type": "string" },
-        "url": { "type": "string" },
-        "priority": { "type": "integer" },
-        "verify": { "$ref": "#/$defs/VerifyToggle" }
-      },
-      "required": ["url"],
-      "additionalProperties": false
-    },
-
-    "StyleSpec": {
-      "type": "object",
-      "description": "VSCode DecorationRenderOptions subset (DESIGN.md §5.8; v0.3). Editor-only; CLI ignores.",
-      "properties": {
-        "color": { "type": "string" },
-        "backgroundColor": { "type": "string" },
-        "fontStyle": { "type": "string" },
-        "fontWeight": { "type": "string" },
-        "textDecoration": { "type": "string" },
-        "border": { "type": "string" },
-        "borderColor": { "type": "string" },
-        "borderRadius": { "type": "string" },
-        "borderStyle": { "type": "string" },
-        "borderWidth": { "type": "string" },
-        "cursor": { "type": "string" },
-        "opacity": { "type": "string" },
-        "letterSpacing": { "type": "string" },
-        "themeColor": { "type": "string", "description": "VSCode workbench color id; overrides `color`." }
-      },
-      "additionalProperties": false
-    },
-
-    "UniquenessSpec": {
-      "type": "object",
-      "description": "Uniqueness enforcement (DESIGN.md §5.9; post-v0.4 backlog).",
-      "properties": {
-        "scope": { "type": "string", "enum": ["workspace", "file"], "default": "workspace" },
-        "by": { "type": "string", "description": "Capture or field to enforce uniqueness on (e.g. `capture:slug` or `match`)." },
-        "ignoreCase": { "type": "boolean", "default": false },
-        "severity": { "$ref": "#/$defs/Severity" }
-      },
-      "additionalProperties": false
-    },
-
-    "ScopeConfig": {
-      "type": "object",
-      "description": "Where the pattern is applied. See DESIGN.md §5.4.",
-      "properties": {
-        "include": {
-          "type": "array",
-          "items": { "type": "string" },
-          "description": "Gitignore-style globs to include."
-        },
-        "exclude": {
-          "type": "array",
-          "items": { "type": "string" }
-        },
-        "commentsOnly": {
-          "type": "boolean",
-          "default": false,
-          "description": "Coarse comment-region filter. See DESIGN.md §5.4.1."
-        },
-        "prefix": { "$ref": "#/$defs/PrefixPolicy" },
-        "commitMessage": {
-          "description": "Whether the pattern applies to commit messages (v0.2; DESIGN.md §5.4.3).",
-          "oneOf": [
-            { "type": "boolean" },
-            { "type": "string", "enum": ["required"] }
-          ]
-        }
-      },
-      "additionalProperties": false
-    },
-
-    "PrefixPolicy": {
-      "type": "object",
-      "description": "Comment-prefix policy (DESIGN.md §5.4.2; v0.2 for full policy).",
-      "properties": {
-        "require": {
-          "type": "string",
-          "enum": ["comment", "lineComment", "blockComment", "any"],
-          "default": "comment"
-        },
-        "ownLine": { "type": "boolean", "default": false },
-        "leadingWhitespace": {
+          "description": "Local-path resolver config (only meaningful for `kind: \"local\"`).",
           "anyOf": [
-            { "type": "string", "enum": ["none", "any"] },
-            { "type": "string", "description": "Regex" }
+            {
+              "$ref": "#/definitions/LocalResolveConfig"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
-        "trailingContent": { "type": "string", "enum": ["none", "any"], "default": "any" },
-        "blockComment": {
-          "type": "object",
-          "properties": {
-            "allowMidLine": { "type": "boolean", "default": false },
-            "leadingDecoration": { "type": "boolean", "default": false }
-          },
-          "additionalProperties": false
-        },
-        "onUnknownLanguage": { "type": "string", "enum": ["lenient", "strict", "none"], "default": "lenient" }
-      },
-      "additionalProperties": false
-    },
-
-    "ActionsConfig": {
-      "type": "object",
-      "description": "Per-pattern actions: open, preview, verify. See DESIGN.md §5.3.",
-      "properties": {
-        "open": { "$ref": "#/$defs/ActionConfig" },
-        "preview": { "$ref": "#/$defs/ActionConfig" },
-        "verify": { "$ref": "#/$defs/ActionConfig" }
-      },
-      "additionalProperties": false
-    },
-
-    "ActionConfig": {
-      "type": "object",
-      "description": "An open/preview/verify action.",
-      "properties": {
-        "kind": { "type": "string", "enum": ["url", "file", "http", "static", "command", "targets"] },
-        "url": { "type": "string" },
-        "headers": { "type": "object", "additionalProperties": { "type": "string" } },
-        "method": { "type": "string", "enum": ["HEAD", "GET", "POST"] },
-        "acceptStatus": { "type": "array", "items": { "type": "integer" } },
-        "render": { "type": "string", "description": "Markdown template using {field.path} response accessors." },
-        "timeoutMs": { "type": "integer" },
-        "responseFilter": {
-          "type": "array",
-          "description": "Predicate filters over the response body (post-v0.4 backlog; DESIGN.md §13.3.2).",
-          "items": { "$ref": "#/$defs/ResponseFilter" }
-        },
-        "onFilterFail": { "$ref": "#/$defs/Severity" },
-        "filterTtlSeconds": { "type": "integer" },
-        "anchor": { "type": "string", "enum": ["ifPresent", "always", "never"] },
-        "enabled": { "type": "boolean" },
-        "select": { "type": "string", "enum": ["primary", "menu", "all"] }
-      },
-      "additionalProperties": true
-    },
-
-    "ResponseFilter": {
-      "type": "object",
-      "description": "One JSON-body predicate (post-v0.4 backlog; DESIGN.md §13.3.2).",
-      "properties": {
-        "field": { "type": "string" },
-        "equals": {},
-        "notEquals": {},
-        "matches": { "type": "string" },
-        "notMatches": { "type": "string" },
-        "contains": {},
-        "notContains": {},
-        "before": { "type": "string" },
-        "after": { "type": "string" },
-        "lessThan": { "type": "number" },
-        "greaterThan": { "type": "number" },
-        "exists": { "type": "boolean" },
-        "notExists": { "type": "boolean" },
-        "onFail": { "$ref": "#/$defs/Severity" }
-      },
-      "required": ["field"],
-      "additionalProperties": false
-    },
-
-    "VerifyToggle": {
-      "type": "object",
-      "properties": {
-        "enabled": { "type": "boolean", "default": true },
-        "profile": { "type": "string" },
-        "required": { "type": "boolean" },
-        "method": { "type": "string" },
-        "acceptStatus": { "type": "array", "items": { "type": "integer" } },
-        "timeoutMs": { "type": "integer" },
-        "anchor": { "type": "string", "enum": ["ifPresent", "always", "never"] }
-      },
-      "additionalProperties": true
-    },
-
-    "UpgradeConfig": {
-      "type": "object",
-      "description": "Auto-upgrade codemod rules (v0.3; DESIGN.md §11).",
-      "properties": {
-        "rules": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/UpgradeRule" }
-        }
-      },
-      "additionalProperties": false
-    },
-
-    "UpgradeRule": {
-      "type": "object",
-      "properties": {
-        "match": { "type": "string" },
-        "rewrite": { "type": "string" },
-        "skip": { "type": "boolean", "default": false },
-        "uses": {
-          "type": "array",
-          "items": { "type": "string", "enum": ["blame", "crossPattern"] }
-        },
-        "tag": { "type": "string" }
-      },
-      "additionalProperties": false
-    },
-
-    "UnverifiedConfig": {
-      "type": "object",
-      "description": "Unverified-reference marker (v0.2; DESIGN.md §5.6).",
-      "properties": {
-        "capture": { "type": "string", "description": "Named regex capture that signals unverified." },
-        "maxAge": { "type": "string", "description": "Doctor warns if older than this (e.g. '90 days')." },
-        "diagnostics": { "$ref": "#/$defs/Severity" }
-      },
-      "required": ["capture"],
-      "additionalProperties": false
-    },
-
-    "LocalResolveConfig": {
-      "type": "object",
-      "description": "Local-path resolution for kind:local patterns. See DESIGN.md §6.",
-      "properties": {
-        "root": { "type": "string" },
-        "anchorMode": { "type": "string", "enum": ["workspace", "file", "rootedOrFile"], "default": "workspace" },
-        "extensions": { "type": "array", "items": { "type": "string" } },
-        "indexFiles": { "type": "array", "items": { "type": "string" } },
-        "caseSensitive": { "type": "string", "enum": ["always", "never", "fs"], "default": "fs" },
-        "anchor": { "type": "string", "description": "Variable expression that yields the anchor name." },
-        "anchorVerify": { "type": "string", "enum": ["ifPresent", "always", "never"], "default": "ifPresent" },
-        "anchorStyle": { "type": "string" },
-        "slugifier": {
-          "anyOf": [
-            { "type": "string", "enum": ["github", "pandoc", "gitlab", "hugo", "mkdocs-material"] },
-            { "type": "object", "properties": { "custom": { "type": "array" } } }
-          ]
-        }
-      },
-      "additionalProperties": false
-    },
-
-    "IfChangeMarker": {
-      "type": "object",
-      "description": "IfChange marker definition (v0.2; DESIGN.md §10.3).",
-      "properties": {
-        "regex": { "type": "string" },
-        "idCapture": { "type": "string" }
-      },
-      "required": ["regex"],
-      "additionalProperties": false
-    },
-
-    "ThenChangeMarker": {
-      "type": "object",
-      "description": "ThenChange marker definition (v0.2; DESIGN.md §10.3).",
-      "properties": {
-        "regex": { "type": "string" },
-        "targetsCapture": { "type": "string" },
-        "targetGrammar": { "type": "string", "enum": ["csv", "json-array", "yaml"], "default": "csv" },
-        "labelSeparator": { "type": "string", "enum": [":", "#"], "default": ":" }
-      },
-      "required": ["regex"],
-      "additionalProperties": false
-    },
-
-    "LabelMarkers": {
-      "type": "object",
-      "description": "Named-region label markers (v0.2; DESIGN.md §10).",
-      "properties": {
-        "open": {
-          "type": "object",
-          "properties": {
-            "regex": { "type": "string" },
-            "nameCapture": { "type": "string" }
-          },
-          "required": ["regex"],
-          "additionalProperties": false
-        },
-        "close": {
-          "type": "object",
-          "properties": {
-            "regex": { "type": "string" }
-          },
-          "required": ["regex"],
-          "additionalProperties": false
-        }
-      },
-      "additionalProperties": false
-    },
-
-    "IfChangeBlockConfig": {
-      "type": "object",
-      "properties": {
-        "bounding": { "type": "string", "enum": ["paired", "multipleThenChange"], "default": "paired" },
-        "allowNesting": { "type": "boolean", "default": true },
-        "scope": { "$ref": "#/$defs/ScopeConfig" }
-      },
-      "additionalProperties": false
-    },
-
-    "LanguageDef": {
-      "type": "object",
-      "description": "One language entry in the table. See DESIGN.md §7.5.",
-      "properties": {
-        "extensions": { "type": "array", "items": { "type": "string" } },
-        "filenames": { "type": "array", "items": { "type": "string" } },
-        "shebangs": { "type": "array", "items": { "type": "string" } },
-        "lineComment": {
-          "anyOf": [
-            { "type": "string" },
-            { "type": "array", "items": { "type": "string" } }
-          ]
-        },
-        "blockComment": {
-          "type": "array",
-          "items": { "type": "string" },
-          "minItems": 2,
-          "maxItems": 2,
-          "description": "[open, close]"
-        },
-        "extends": { "type": "string" }
-      },
-      "additionalProperties": false
-    },
-
-    "BlameConfig": {
-      "type": "object",
-      "description": "git-blame mapping for the auto-upgrade subsystem (v0.3; DESIGN.md §11.4).",
-      "properties": {
-        "userMapping": {
-          "type": "object",
-          "additionalProperties": { "type": "string" }
-        },
-        "ignoreAuthors": {
-          "type": "array",
-          "items": { "type": "string" }
-        },
-        "fallback": {
-          "anyOf": [
-            { "type": "string", "enum": ["emailLocalPart", "gitConfigUserName", "literal"] },
-            { "type": "object", "properties": { "value": { "type": "string" } }, "required": ["value"] }
-          ]
-        }
-      },
-      "additionalProperties": false
-    },
-
-    "VerificationDefaults": {
-      "type": "object",
-      "description": "HTTP verifier defaults. See DESIGN.md §13.3.",
-      "properties": {
-        "acceptStatus": { "type": "array", "items": { "type": "integer" } },
-        "method": { "type": "string", "enum": ["HEAD", "GET", "POST"] },
-        "timeoutMs": { "type": "integer", "minimum": 0 },
-        "concurrency": { "type": "integer", "minimum": 1 },
-        "userAgent": { "type": "string" },
-        "followRedirects": { "type": "boolean" },
-        "maxRedirects": { "type": "integer" },
-        "anchor": { "type": "string", "enum": ["ifPresent", "always", "never"] },
-        "anchorMaxBytes": { "type": "integer" },
-        "backoff": { "$ref": "#/$defs/BackoffConfig" },
-        "onApiFailure": { "type": "string", "enum": ["warn", "error", "skip"] },
-        "cache": { "$ref": "#/$defs/CacheConfig" },
-        "checksums": {
-          "type": "object",
-          "description": "Checksum-mode defaults (post-v0.4 backlog; DESIGN.md §10.14).",
-          "additionalProperties": true
-        }
-      },
-      "additionalProperties": false
-    },
-
-    "BackoffConfig": {
-      "type": "object",
-      "description": "Exponential backoff for transient failures (v0.3; DESIGN.md §13.3.3).",
-      "properties": {
-        "initialDelayMs": { "type": "integer", "minimum": 0 },
-        "exponent": { "type": "number", "exclusiveMinimum": 0 },
-        "maxDelayMs": { "type": "integer", "minimum": 0 },
-        "maxAttempts": { "type": "integer", "minimum": 0 },
-        "maxTotalMs": { "type": "integer", "minimum": 0 },
-        "jitter": { "type": "string", "enum": ["full", "none"] }
-      },
-      "additionalProperties": false
-    },
-
-    "CacheConfig": {
-      "type": "object",
-      "properties": {
-        "path": { "type": "string" },
-        "ttlSeconds": { "type": "integer", "minimum": 0 },
-        "negativeTtlSeconds": { "type": "integer", "minimum": 0 },
-        "anchorTtlSeconds": { "type": "integer", "minimum": 0 },
-        "anchorNegativeTtlSeconds": { "type": "integer", "minimum": 0 },
-        "filterTtlSeconds": { "type": "integer", "minimum": 0 }
-      },
-      "additionalProperties": false
-    },
-
-    "NetworkProfile": {
-      "type": "object",
-      "description": "One named network profile. See DESIGN.md §12.2.",
-      "properties": {
-        "internalHostPatterns": { "type": "array", "items": { "type": "string" } },
-        "externalProxy": { "type": ["string", "null"] },
-        "internalProxy": { "type": ["string", "null"] },
-        "noProxy": { "type": "array", "items": { "type": "string" } },
-        "extraHeaders": { "type": "object", "additionalProperties": { "type": "string" } },
-        "skipInternal": { "type": "boolean", "default": false },
-        "variables": {
-          "type": "object",
-          "description": "Profile-scoped overrides for top-level variables (v0.3; DESIGN.md §12.2.1).",
-          "additionalProperties": true
-        }
-      },
-      "additionalProperties": false
-    },
-
-    "ProfileSelection": {
-      "type": "object",
-      "description": "How to choose the active network profile. See DESIGN.md §12.3.",
-      "properties": {
-        "order": {
-          "type": "array",
-          "items": { "type": "string" }
-        },
-        "canary": {
-          "type": "object",
-          "properties": {
-            "url": { "type": "string" },
-            "timeoutMs": { "type": "integer" },
-            "onSuccess": { "type": "string" },
-            "onFailure": { "type": "string" }
-          },
-          "required": ["url"],
-          "additionalProperties": false
-        }
-      },
-      "additionalProperties": false
-    },
-
-    "SubmodulesConfig": {
-      "type": "object",
-      "description": "git-submodule pass-through (v0.4; DESIGN.md §6.4).",
-      "properties": {
-        "follow": { "type": "boolean", "default": false },
-        "perSubmoduleConfig": { "type": "string", "enum": ["use-parent", "discover", "ignore"], "default": "use-parent" }
-      },
-      "additionalProperties": false
-    },
-
-    "ConcurrencyConfig": {
-      "type": "object",
-      "description": "Write-mode subcommand concurrency policy (DESIGN.md §11.10).",
-      "properties": {
-        "lockPath": { "type": "string" },
-        "lockTimeoutMs": { "type": "integer", "minimum": 0 },
-        "allowDirty": { "type": "boolean", "default": false }
-      },
-      "additionalProperties": false
-    },
-
-    "IntegrityConfig": {
-      "type": "object",
-      "description": "Doctor strictness and per-check overrides. See DESIGN.md §9.1, §7.3.",
-      "properties": {
-        "onConflict": { "type": "string", "enum": ["error", "warn", "first-wins"], "default": "error" },
-        "maxStyledPatterns": { "type": "integer", "minimum": 0, "default": 100 },
-        "maxOtherPatterns": { "type": "integer", "minimum": 0, "default": 5 },
-        "categories": {
+        "severity": {
+          "description": "Per-check severity overrides. Keys are check names; values are `Severity`. See `DESIGN.md` §5.4.3, §9.1.",
           "type": "object",
           "additionalProperties": {
-            "type": "object",
-            "properties": {
-              "icon": { "type": "string" },
-              "displayOrder": { "type": "integer" },
-              "defaultSubGrouping": { "type": "string" }
-            },
-            "additionalProperties": false
+            "$ref": "#/definitions/Severity"
           }
-        },
-        "coupled": {
-          "type": "object",
-          "properties": {
-            "maxAllGlob": { "type": "integer", "minimum": 1 }
-          },
-          "additionalProperties": false
-        },
-        "checks": {
-          "type": "object",
-          "description": "Override severity for any named doctor check.",
-          "additionalProperties": { "$ref": "#/$defs/Severity" }
         }
       },
       "additionalProperties": false
+    },
+    "PatternKind": {
+      "description": "Reference kinds. See `DESIGN.md` §5.2.\n\nv0.1 implements `Url` and `Local`. `IfChange` is accepted by the schema so v0.2 configs parse, but the v0.1 engine rejects it during scan. `Command` is reserved for the post-v0.4 backlog.",
+      "oneOf": [
+        {
+          "description": "Target is a URL string.",
+          "type": "string",
+          "enum": [
+            "url"
+          ]
+        },
+        {
+          "description": "Target is a workspace-relative path resolved via §6.",
+          "type": "string",
+          "enum": [
+            "local"
+          ]
+        },
+        {
+          "description": "Coupled-change marker pair (v0.2; see §10).",
+          "type": "string",
+          "enum": [
+            "ifchange"
+          ]
+        },
+        {
+          "description": "Custom command (post-v0.4 backlog).",
+          "type": "string",
+          "enum": [
+            "command"
+          ]
+        }
+      ]
+    },
+    "TargetSpec": {
+      "description": "One target in a multi-target pattern. See `DESIGN.md` §5.3.1 (v0.3).",
+      "type": "object",
+      "required": [
+        "url"
+      ],
+      "properties": {
+        "label": {
+          "description": "Display label for the hover / \"Open with…\" picker.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "url": {
+          "description": "URL template; supports variables.",
+          "type": "string"
+        },
+        "priority": {
+          "description": "Priority; higher wins for primary. Default 0.",
+          "default": 0,
+          "type": "integer",
+          "format": "int32"
+        },
+        "verify": {
+          "description": "Per-target verify override.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/VerifyToggle"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "VerifyToggle": {
+      "description": "Per-pattern verify configuration.",
+      "anyOf": [
+        {
+          "description": "`\"verify\": true` / `\"verify\": false`.",
+          "type": "boolean"
+        },
+        {
+          "description": "Full structured toggle.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/VerifyOptions"
+            }
+          ]
+        },
+        {
+          "description": "Empty object preserves \"unspecified\" semantics.",
+          "type": "null"
+        }
+      ]
+    },
+    "VerifyOptions": {
+      "description": "Structured verify configuration (the non-boolean shape).",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "description": "Whether verification runs at all. `None` means inherit defaults.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "profile": {
+          "description": "Force a specific network profile for this verification.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "required": {
+          "description": "For multi-target patterns: whether this target must succeed for the reference to be considered verified (v0.3).",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "method": {
+          "description": "HTTP method override.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "acceptStatus": {
+          "description": "HTTP statuses considered success.",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint16",
+            "minimum": 0.0
+          }
+        },
+        "timeoutMs": {
+          "description": "Per-target timeout.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "anchor": {
+          "description": "Anchor verification mode (v0.2; §6.3.1, §13.3.1).",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "ScopeConfig": {
+      "description": "Where a pattern is applied. See `DESIGN.md` §5.4.",
+      "type": "object",
+      "properties": {
+        "include": {
+          "description": "Gitignore-style globs to include. Empty = include everything.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "exclude": {
+          "description": "Gitignore-style globs to exclude. Empty = no extra exclusions.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "commentsOnly": {
+          "description": "If true, only match inside detected comment regions. See §5.4.1.",
+          "type": "boolean"
+        },
+        "prefix": {
+          "description": "Full prefix policy (v0.2; §5.4.2). Accepted for forward compat."
+        },
+        "commitMessage": {
+          "description": "Commit-message scope (v0.2; §5.4.3). Accepted for forward compat. Either a boolean or the string `\"required\"`."
+        }
+      },
+      "additionalProperties": false
+    },
+    "ActionsConfig": {
+      "description": "Per-pattern action overrides (open / preview / verify). See `DESIGN.md` §5.3.",
+      "type": "object",
+      "properties": {
+        "open": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ActionConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "preview": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ActionConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "verify": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ActionConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "ActionConfig": {
+      "description": "One action. The full set of fields is accepted by the schema so v0.2+ configs parse; the v0.1 engine consumes only `kind` and `url`.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "description": "Action kind (e.g. `url`, `http`, `file`, `static`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "url": {
+          "description": "URL template (for `http` previews / verifies).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "headers": {
+          "description": "Custom headers.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "method": {
+          "description": "HTTP method override.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "acceptStatus": {
+          "description": "Accepted HTTP statuses.",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint16",
+            "minimum": 0.0
+          }
+        },
+        "render": {
+          "description": "Markdown template for HTTP-preview rendering.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "timeoutMs": {
+          "description": "Per-action timeout.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0.0
+        }
+      }
+    },
+    "LocalResolveConfig": {
+      "description": "Local-path resolution for `kind: \"local\"` patterns. See `DESIGN.md` §6.",
+      "type": "object",
+      "properties": {
+        "root": {
+          "description": "Search root; defaults to `${workspaceFolder}`. Supports variables.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "anchorMode": {
+          "description": "Anchor mode for path resolution.",
+          "default": "workspace",
+          "allOf": [
+            {
+              "$ref": "#/definitions/AnchorMode"
+            }
+          ]
+        },
+        "extensions": {
+          "description": "File extensions to try when the literal path doesn't resolve.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "indexFiles": {
+          "description": "Index file names to try when the candidate is a directory.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "caseSensitive": {
+          "description": "Filesystem case-sensitivity policy.",
+          "default": "fs",
+          "allOf": [
+            {
+              "$ref": "#/definitions/CaseSensitivity"
+            }
+          ]
+        },
+        "anchor": {
+          "description": "Capture template for the anchor name (e.g. `${anchor}`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "anchorVerify": {
+          "description": "Anchor verification mode (v0.2; §6.3).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "slugifier": {
+          "description": "Markdown slugifier (v0.2; §6.3.2). Free-form to allow custom configuration objects without locking the schema now."
+        }
+      },
+      "additionalProperties": false
+    },
+    "AnchorMode": {
+      "description": "How to interpret `kind: \"local\"` paths. See `DESIGN.md` §6.1.",
+      "oneOf": [
+        {
+          "description": "Both `/path` and `path` anchor at workspace root.",
+          "type": "string",
+          "enum": [
+            "workspace"
+          ]
+        },
+        {
+          "description": "`path` is file-relative; `/path` is workspace-rooted.",
+          "type": "string",
+          "enum": [
+            "file"
+          ]
+        },
+        {
+          "description": "As `File`, but `./path` forces file-relative.",
+          "type": "string",
+          "enum": [
+            "rootedOrFile"
+          ]
+        }
+      ]
+    },
+    "CaseSensitivity": {
+      "description": "Filesystem case-sensitivity policy. See `DESIGN.md` §6.2.",
+      "oneOf": [
+        {
+          "description": "Honour the filesystem (insensitive on macOS default + Windows, sensitive on Linux).",
+          "type": "string",
+          "enum": [
+            "fs"
+          ]
+        },
+        {
+          "description": "Always case-sensitive, regardless of filesystem.",
+          "type": "string",
+          "enum": [
+            "always"
+          ]
+        },
+        {
+          "description": "Always case-insensitive, regardless of filesystem.",
+          "type": "string",
+          "enum": [
+            "never"
+          ]
+        }
+      ]
+    },
+    "Severity": {
+      "description": "Severity for a doctor check or pattern outcome.\n\nOrder is significant: a `max` over a set of severities is meaningful — `Off < Hint < Info < Warning < Error`.",
+      "oneOf": [
+        {
+          "description": "The check is disabled; produces no diagnostic.",
+          "type": "string",
+          "enum": [
+            "off"
+          ]
+        },
+        {
+          "description": "Informational; cosmetic / advisory.",
+          "type": "string",
+          "enum": [
+            "hint"
+          ]
+        },
+        {
+          "description": "Worth noting but not a defect.",
+          "type": "string",
+          "enum": [
+            "info"
+          ]
+        },
+        {
+          "description": "Likely a defect; surfaces in reports.",
+          "type": "string",
+          "enum": [
+            "warning"
+          ]
+        },
+        {
+          "description": "Definite defect; fails the run.",
+          "type": "string",
+          "enum": [
+            "error"
+          ]
+        }
+      ]
     }
   }
 }
