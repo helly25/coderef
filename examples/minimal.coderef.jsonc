@@ -1,0 +1,31 @@
+// Minimal v0.1 .coderef.jsonc.
+// Validates against ../schema/coderef.schema.json.
+// One URL pattern, one local pattern. No multi-target, no coupled-change,
+// no upgrade rules — the smallest config that exercises the v0.1 surface.
+
+{
+  "$schema": "../schema/coderef.schema.json",
+
+  "patterns": {
+    "todo-user": {
+      "regex":  "TODO\\(@(?<user>[a-zA-Z][\\w.-]{0,63})\\)",
+      "target": "https://users.example.com/${user}",
+      "title":  "User profile: ${user}",
+      "scope":  { "commentsOnly": true }
+    },
+
+    "docref": {
+      "regex":  "DOCREF\\((?<path>/?[^)\\s#]+)(?:#(?<anchor>[^)\\s]+))?\\)",
+      "kind":   "local",
+      "target": "${path}",
+      "resolve": {
+        "root":       "${workspaceFolder}",
+        "anchorMode": "workspace",
+        "extensions": [".md", ".mdx"],
+        "indexFiles": ["README.md"]
+      }
+    }
+  },
+
+  "ignore": ["**/node_modules/**", "**/dist/**", "**/.git/**"]
+}
