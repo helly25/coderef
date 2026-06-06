@@ -6,15 +6,19 @@
 //! native CLI binary and to a WASM module used in-process by the `VSCode`
 //! extension (see `DESIGN.md` §14.5.1 for the architectural commitment).
 //!
-//! v0.1 foundation slice: config types + JSONC loading + variable
-//! resolution + pattern compilation. Scanner, verifier, and host-side I/O
-//! land in subsequent PRs per `DESIGN.md` §20.
+//! v0.1 modules so far: config types + JSONC loading + variable
+//! resolution + pattern compilation + comment-region detection +
+//! per-file scanner + host-side workspace walker. Verifier and the
+//! VSCode/WASM bindings land in subsequent PRs per `DESIGN.md` §20.
 
 #![doc(html_root_url = "https://docs.rs/coderef-core/0.0.0")]
 
+pub mod comment;
 pub mod config;
 pub mod error;
 pub mod pattern;
+pub mod reference;
+pub mod scan;
 pub mod severity;
 pub mod variables;
 

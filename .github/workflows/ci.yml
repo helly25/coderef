@@ -49,6 +49,25 @@ jobs:
       - name: coderef config show <example>
         run: ./target/release/coderef config show examples/minimal.coderef.jsonc > /dev/null
 
+      - name: coderef list — scan-self smoke
+        shell: bash
+        run: |
+          # Build a tiny temp workspace + config and verify the scanner
+          # discovers the planted reference.
+          tmp=$(mktemp -d)
+          cat > "$tmp/.coderef.jsonc" <<'EOF'
+          { "patterns": { "todo": {
+              "regex": "TODO\\(@(?<user>\\w+)\\)",
+              "target": "https://x/${user}",
+              "scope": { "commentsOnly": true }
+          } } }
+          EOF
+          printf 'fn main() { // TODO(@ci) — proves the scanner runs\n}\n' > "$tmp/a.rs"
+          out=$(./target/release/coderef list "$tmp")
+          echo "$out"
+          echo "$out" | grep -q "TODO(@ci)" || { echo "scanner did not find planted reference"; exit 1; }
+          rm -rf "$tmp"
+
       - name: Regenerate JSON Schema from Rust types
         run: cargo run --bin coderef-gen-schema --locked
 

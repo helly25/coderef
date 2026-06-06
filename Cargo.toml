@@ -23,6 +23,7 @@ fancy-regex   = "0.14"
 thiserror     = "2.0"
 anyhow        = "1.0"
 indexmap      = { version = "2", features = ["serde"] }
+ignore        = "0.4"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

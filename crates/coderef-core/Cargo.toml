@@ -35,3 +35,8 @@ schemars     = { workspace = true }
 fancy-regex  = { workspace = true }
 thiserror    = { workspace = true }
 indexmap     = { workspace = true }
+
+# Host-only deps (excluded from wasm32 builds via cfg gating on the
+# modules that use them).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+ignore       = { workspace = true }

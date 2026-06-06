@@ -70,7 +70,11 @@ impl Namespace {
 
 /// Variable-resolution context. Holds whatever per-call data the resolver
 /// needs to fill in placeholders.
-#[derive(Default)]
+///
+/// `Clone` lets the scanner derive a per-match context (base context
+/// plus the new captures) without rebuilding from the config every time.
+/// The `env` field is `Copy` because trait-object references are `Copy`.
+#[derive(Clone, Default)]
 pub struct Context<'a> {
     builtins: IndexMap<String, String>,
     captures: IndexMap<String, String>,
