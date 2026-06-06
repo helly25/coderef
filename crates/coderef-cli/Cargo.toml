@@ -18,3 +18,4 @@ path = "src/main.rs"
 
 [dependencies]
 coderef-core = { path = "../coderef-core" }
+serde_json   = { workspace = true }

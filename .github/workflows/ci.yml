@@ -46,6 +46,22 @@ jobs:
       - name: coderef binary --version
         run: ./target/release/coderef --version
 
+      - name: coderef config show <example>
+        run: ./target/release/coderef config show examples/minimal.coderef.jsonc > /dev/null
+
+      - name: Regenerate JSON Schema from Rust types
+        run: cargo run --bin coderef-gen-schema --locked
+
+      - name: Verify committed schema matches generated schema
+        run: |
+          if ! git diff --exit-code -- schema/coderef.schema.json; then
+            echo ""
+            echo "schema/coderef.schema.json is out of date. Re-run:"
+            echo "  cargo run --bin coderef-gen-schema"
+            echo "and commit the result."
+            exit 1
+          fi
+
   # ---------------------------------------------------------------------------
   extension:
     name: VSCode extension (TS)

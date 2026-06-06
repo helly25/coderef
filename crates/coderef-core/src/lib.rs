@@ -6,10 +6,17 @@
 //! native CLI binary and to a WASM module used in-process by the `VSCode`
 //! extension (see `DESIGN.md` §14.5.1 for the architectural commitment).
 //!
-//! At v0.0.0 this is a placeholder so the workspace compiles. Real features
-//! land per the roadmap in `DESIGN.md` §19.
+//! v0.1 foundation slice: config types + JSONC loading + variable
+//! resolution + pattern compilation. Scanner, verifier, and host-side I/O
+//! land in subsequent PRs per `DESIGN.md` §20.
 
 #![doc(html_root_url = "https://docs.rs/coderef-core/0.0.0")]
+
+pub mod config;
+pub mod error;
+pub mod pattern;
+pub mod severity;
+pub mod variables;
 
 /// The crate version, exposed for the CLI's `--version` flag.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
