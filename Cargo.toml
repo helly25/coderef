@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/coderef-core",
+    "crates/coderef-core-wasm",
     "crates/coderef-cli",
 ]
 
