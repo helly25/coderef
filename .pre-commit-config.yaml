@@ -1,0 +1,43 @@
+# pre-commit-framework config for working *on* the coderef repo.
+# Distinct from `.pre-commit-hooks.yaml`, which declares hooks *consumers*
+# of coderef install in their own repos.
+#
+# Install:
+#   pip install pre-commit && pre-commit install
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-merge-conflict
+      - id: check-yaml
+      - id: check-json
+      - id: check-added-large-files
+        args: ["--maxkb=1024"]
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+
+  - repo: local
+    hooks:
+      - id: align-md-tables
+        name: Align markdown tables (idempotent)
+        description: Re-runs tools/align-md-tables.py over modified .md files.
+        entry: python3 tools/align-md-tables.py
+        language: system
+        files: \.md$
+
+      - id: cargo-fmt
+        name: cargo fmt --check
+        description: Reject Rust code that isn't formatted.
+        entry: cargo fmt --all -- --check
+        language: system
+        types: [rust]
+        pass_filenames: false
+
+      - id: cargo-clippy
+        name: cargo clippy -D warnings
+        description: Reject Rust code that fails clippy. Slow; runs only on Rust changes.
+        entry: cargo clippy --all-targets --all-features -- -D warnings
+        language: system
+        types: [rust]
+        pass_filenames: false

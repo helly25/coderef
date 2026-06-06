@@ -289,6 +289,37 @@ Alternatives considered:
 | Go CLI + TS extension      | RE2 lacks lookaround; `regexp2` is a separate engine with ~10× perf gap. Go → WASM is poor. C++→Go feels like stepping sideways (no RAII, weaker types).                           |
 | Python CLI + TS extension  | CPython is *slower* than Node V8 for this workload (1.5–3×) plus heavier import startup (50–150 ms). Distribution via pyenv/venv is messy. VSCode parity requires LSP indirection. |
 
+#### 4.1.1 Source-of-truth contract
+
+Two distinct meanings of "source of truth" matter here:
+
+- **Implementation source of truth: `coderef-core`** (the Rust crate).
+  All semantics — regex, variable resolution, resolver, scanner,
+  coupled-change algorithm, doctor checks — live in one place and one
+  place only. The CLI binary, the WASM module, the LSP server, and
+  any future plugin call into this crate. There is no parallel
+  implementation anywhere else.
+
+- **Behavioural source of truth: the CLI binary.** Everything a user
+  or a plugin observes as "what coderef does" is defined by
+  `coderef <subcommand> --report json` on a given input. The WASM
+  module used by the VSCode extension, the LSP server in v0.4, and
+  every future editor plugin (JetBrains, Neovim/Helix via LSP, …) are
+  **conformance-tested against the CLI**. When a plugin's behaviour
+  diverges from the CLI's for the same input, the plugin is wrong
+  by definition; the CLI's output is the reference.
+
+This is what makes "multiple plugins for multiple IDEs" tractable.
+Every plugin developer has the same artefact to validate against —
+`cargo install coderef` + run the CLI — without arguing about which
+host is canonical.
+
+The CI conformance job (§16, post-v0.1) feeds a curated input corpus
+through the CLI and through the WASM module, diffs the JSON outputs,
+and fails on any divergence. Same shape extends to the LSP server when
+it ships in v0.4: the LSP responses for a corpus of fixture documents
+are golden-tested against `coderef --report json` for the same inputs.
+
 ### 4.2 Components and key crates / packages
 
 | Component                    | Package                       | Notes                                                                                                                                                                                                                                                                          |
@@ -1435,6 +1466,20 @@ The full JSON Schema lives in `schema/coderef.schema.json` (draft 2020-12)
 and ships with the npm wrapper so editors that respect `$schema` (VSCode
 included) get autocomplete.
 
+**Generation, not maintenance.** From v0.1 onward, the schema is
+*derived* from `coderef-core`'s Rust config types via the
+[`schemars`](https://docs.rs/schemars/) crate. The committed
+`schema/coderef.schema.json` is the output of a `cargo run --bin
+gen-schema` step that runs as part of the build; CI re-runs the
+generator and `git diff --exit-code`s the result, failing if the
+schema in the tree drifts from what the Rust types say. This
+eliminates "schema disagrees with the engine" as a class of bug — the
+Rust types are the only authoring surface, the JSON Schema is a build
+artefact.
+
+The hand-authored v0.0.0 schema currently in the tree is a placeholder
+intended to be regenerated the first time real config types land.
+
 ### 7.4 Pointing the hook at a non-standard config
 
 Pre-commit users whose config lives outside the default search path pass
@@ -2223,30 +2268,30 @@ Exit codes follow the project convention (§13.1).
 
 The integrity checker (§9) extends to coupled-change patterns:
 
-| Check                        | Default severity | Description                                                                                                                                                                    |
-| ---------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `coupled.orphanIfChange`     | error            | IfChange marker with no matching ThenChange.                                                                                                                                   |
-| `coupled.orphanThenChange`   | error            | ThenChange marker with no preceding IfChange.                                                                                                                                  |
-| `coupled.soloId`             | warning          | Only one block uses a given id — the coupling is meaningless.                                                                                                                  |
-| `coupled.malformedTarget`    | error            | A target token cannot be parsed under §10.2 grammar.                                                                                                                           |
-| `coupled.unresolvedTarget`   | error            | A target's file or line range does not exist in the working tree.                                                                                                              |
-| `coupled.blockOverlap`       | error            | Two non-nested blocks overlap.                                                                                                                                                 |
-| `coupled.composableTypo`     | warning          | Id text *almost* matches a pattern's regex but fails to resolve.                                                                                                               |
-| `coupled.renameSuspected`    | warning          | A target path doesn't exist but `git log --follow --diff-filter=R` suggests a recent rename.                                                                                   |
-| `coupled.unboundedGlobAll`   | warning          | `{all}` glob matches more than `integrity.coupled.maxAllGlob` files (default 50).                                                                                              |
-| `coupled.cycle`              | warning          | Shape A target graph contains a directed cycle (A → B → A). Often intentional — surfaces so the author confirms or breaks. Use `NoVerify(coderef:ifchange)` to declare intent. |
-| `checksum.drift`             | error            | Stored hash in `.coderef-checksums.json` differs from current content hash (§10.14). v0.2.                                                                                     |
-| `checksum.untrackedRange`    | info             | A `path:N-M` target appears in source but isn't tracked in the management file. v0.2.                                                                                          |
-| `checksum.staleEntry`        | warning          | Management file has an entry whose `target` no longer resolves (file deleted, out-of-range). v0.2.                                                                             |
-| `checksum.normalizationOnly` | info             | Drift is purely whitespace / line-ending; safe to `coderef checksum --update --apply`. v0.2.                                                                                   |
-| `checksum.malformedEntry`    | error            | `.coderef-checksums.json` fails JSON parse or schema validation. v0.2.                                                                                                         |
-| `label.orphanOpen`           | error            | `Label('name')` without matching `EndLabel`.                                                                                                                                   |
-| `label.orphanClose`          | error            | `EndLabel` not preceded by a still-open `Label(...)`.                                                                                                                          |
-| `label.duplicateInFile`      | error            | Two `Label('name')` in one file.                                                                                                                                               |
-| `label.unknownReference`     | error            | `ThenChange(/path:foo)` where `foo` isn't a label in `/path`.                                                                                                                  |
-| `label.unused`               | info             | A `Label('name')` no `ThenChange` ever references.                                                                                                                             |
-| `label.ambiguousName`        | error            | Label name is purely numeric or matches `N-M` (collides with line-range parsing).                                                                                              |
-| `label.nesting`              | warning          | A `Label` overlaps another non-nested `Label` in the same file.                                                                                                                |
+| Check                        | Default severity | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ---------------------------- | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `coupled.orphanIfChange`     | error            | IfChange marker with no matching ThenChange.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `coupled.orphanThenChange`   | error            | ThenChange marker with no preceding IfChange.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `coupled.soloId`             | warning          | Only one block uses a given id — the coupling is meaningless.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `coupled.malformedTarget`    | error            | A target token cannot be parsed under §10.2 grammar.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `coupled.unresolvedTarget`   | error            | A target's file or line range does not exist in the working tree.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `coupled.blockOverlap`       | error            | Two non-nested blocks overlap.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `coupled.composableTypo`     | warning          | Id text *almost* matches a pattern's regex but fails to resolve.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `coupled.renameSuspected`    | warning          | A target path doesn't exist but `git log --follow --diff-filter=R` suggests a recent rename.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `coupled.unboundedGlobAll`   | warning          | `{all}` glob matches more than `integrity.coupled.maxAllGlob` files (default 50).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `coupled.cycle`              | warning          | A directed cycle exists in the block→target graph. The check runs Tarjan's strongly-connected-components algorithm over the directed graph whose nodes are coupled-change blocks and whose edges are Shape A target arrows. Target resolution honours `extends:` (§7.6) so cycles spanning subdirectory configs are detected. Glob targets expand to the union of matched files before SCC; multi-target patterns (v0.3) contribute one edge per `targets[]` entry. Cycles are *often intentional* (mutually-coupled blocks where each side must change with the other); the check surfaces them so the author confirms or breaks. Use `NoVerify(coderef:ifchange)` on any edge to declare intent. |
+| `checksum.drift`             | error            | Stored hash in `.coderef-checksums.json` differs from current content hash (§10.14). v0.2.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `checksum.untrackedRange`    | info             | A `path:N-M` target appears in source but isn't tracked in the management file. v0.2.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `checksum.staleEntry`        | warning          | Management file has an entry whose `target` no longer resolves (file deleted, out-of-range). v0.2.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `checksum.normalizationOnly` | info             | Drift is purely whitespace / line-ending; safe to `coderef checksum --update --apply`. v0.2.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `checksum.malformedEntry`    | error            | `.coderef-checksums.json` fails JSON parse or schema validation. v0.2.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `label.orphanOpen`           | error            | `Label('name')` without matching `EndLabel`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `label.orphanClose`          | error            | `EndLabel` not preceded by a still-open `Label(...)`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `label.duplicateInFile`      | error            | Two `Label('name')` in one file.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `label.unknownReference`     | error            | `ThenChange(/path:foo)` where `foo` isn't a label in `/path`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `label.unused`               | info             | A `Label('name')` no `ThenChange` ever references.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `label.ambiguousName`        | error            | Label name is purely numeric or matches `N-M` (collides with line-range parsing).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `label.nesting`              | warning          | A `Label` overlaps another non-nested `Label` in the same file.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 
 ### 10.10 Editor UX
 
@@ -3550,6 +3595,14 @@ exfiltrate data or open subprocesses even if a hostile config were
 loaded, because those capabilities aren't compiled in. The CLI has the
 full surface and carries the corresponding hardening.
 
+**The WASM module conforms to the CLI** (§4.1.1). For any input the
+two share — the configured patterns and a buffer of source text — the
+WASM module's output must be byte-identical to `coderef --report json`
+running over the same inputs. CI (§16) golden-diffs the two on a
+curated corpus and fails on divergence. When the editor disagrees
+with `pre-commit`, the editor is wrong by construction; the CLI is the
+reference.
+
 ### 14.6 Visual config editor (v0.3)
 
 The config is the primary surface users interact with after installing the
@@ -3865,7 +3918,7 @@ lists per group are cached after first expansion until invalidated.
 
 ## 15. Other Editors
 
-V0.3+: ship a `coderef lsp` mode (the same Rust binary, different transport)
+V0.4: ship a `coderef lsp` mode (the same Rust binary, different transport)
 that implements:
 
 - `textDocument/documentLink` → references.
@@ -3876,6 +3929,34 @@ that implements:
 Any LSP-capable editor (Neovim, Helix, Sublime LSP, JetBrains LSP plugin) gets
 parity. The VSCode extension will eventually migrate to the LSP transport
 for unified maintenance; v0.1 ships the JSON-IO transport for simplicity.
+
+### 15.1 The CLI as the multi-IDE behavioural contract
+
+When more than one editor plugin exists, a contract problem appears:
+which plugin's behaviour is "correct" if two of them disagree on what a
+reference resolves to, or whether a coupled-change block is satisfied?
+`coderef` resolves this with a single rule, set in §4.1.1:
+
+> **The CLI is the canonical reference.** Every plugin — the VSCode
+> extension's WASM module today, the LSP server in v0.4, any JetBrains
+> or Sublime client built on top of LSP afterwards — defines its
+> "correct" behaviour as "what `coderef --report json` produces on the
+> same input." Any divergence is a bug in the plugin, not in the CLI.
+
+Consequences worth naming:
+
+| Concern                                       | How it gets answered                                                                                                                           |
+| --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Plugin-developer onboarding                   | "Install `coderef` from cargo, point it at a fixture file, capture the JSON. That's your test oracle."                                         |
+| User support: "VSCode says X, CI says Y"      | "Run `coderef check` locally. The answer it gives is the one the project's contract specifies."                                                |
+| New IDE plugin (JetBrains, Helix, Sublime, …) | Define correctness as "LSP responses equal `coderef --report json --lsp-shape` for the same input." A small conformance harness ships in v0.4. |
+| Regression testing across the project         | Golden-output diff against committed `coderef --report json` fixtures (§16 CI).                                                                |
+
+This is the load-bearing reason the project is structured as it is.
+`coderef-core` is the implementation source of truth (one crate, one
+codebase); the CLI is the behavioural source of truth (one observable
+contract); plugins are conformance-tested wrappers. The doc, the
+schema, and any future SDK derive from those two.
 
 ---
 
@@ -4289,8 +4370,10 @@ design is built to avoid (§14.5.1).
   `cache clear` (read-only — write-mode `upgrade` lands in v0.3).
 - Pre-commit hook (`coderef-check`) + `pre-commit-hooks.yaml`.
 - Schema-aware JSONC editing — JSON Schema (`schema/coderef.schema.json`)
-  is published; VSCode's built-in JSON support handles autocomplete +
-  hover + lint based on `$schema`.
+  is published, **generated from `coderef-core`'s Rust config types
+  via `schemars`** (§7.3); VSCode's built-in JSON support handles
+  autocomplete + hover + lint based on `$schema`. CI fails on
+  generator output drifting from the committed schema.
 - One network profile (`default`); CLI/extension flag overrides for
   custom profiles. Full profile model (canary detection, internal/
   external split) lands in v0.3.

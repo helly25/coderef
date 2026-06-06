@@ -41,6 +41,20 @@ python3 tools/align-md-tables.py DESIGN.md README.md
 The script walks the file, identifies tables outside fenced code blocks, and
 pads cells to per-column maximum width without disturbing prose or code.
 
+**Local pre-commit hook.** [`.pre-commit-config.yaml`](./.pre-commit-config.yaml)
+wires the aligner (plus `cargo fmt --check` and `cargo clippy -D warnings`)
+into the `pre-commit` framework. Install once:
+
+```sh
+pip install pre-commit && pre-commit install
+```
+
+After that, every `git commit` runs the aligner over changed `.md` files
+and rejects commits that would have failed the docs-hygiene CI job. The
+same `pre-commit` framework drives the consumer-facing hooks declared in
+[`.pre-commit-hooks.yaml`](./.pre-commit-hooks.yaml), but those serve a
+different audience — installers of `coderef`, not contributors *to* it.
+
 ## Source of truth
 
 `DESIGN.md` is the working specification for `coderef`. When editing code or
