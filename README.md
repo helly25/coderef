@@ -1,12 +1,12 @@
 # coderef
 
-> **Design phase — no code ships yet.** The working specification lives
-> in [`DESIGN.md`](./DESIGN.md). This README exists so a reviewer can
-> form an opinion of the design without reading 4,700 lines first.
+Regex-driven references in source code — resolved, click-opened, and
+verified identically from VSCode and from CI. A `.coderef.jsonc` config
+declares the patterns; the same engine runs inside the editor (via WASM,
+in-process) and inside the Rust CLI binary (for `pre-commit` and CI).
 
-`coderef` lets a project define regex-driven references in source code
-— and resolve, click-open, and verify them identically from VSCode and
-from CI.
+The working specification is [`DESIGN.md`](./DESIGN.md); this README is
+the elevator pitch.
 
 ```python
 # Click-to-open in VSCode; verified by pre-commit; same regex engine in both.
@@ -23,12 +23,9 @@ HASH_PARAMS = {"memory_kib": 19456, "iterations": 2, "parallelism": 1}
 # ThenChange(/docs/security.md:hash-params, /tests/test_auth.py:hash-params)
 ```
 
-A `.coderef.jsonc` config declares the patterns: their regex, the URL
-or local-file they resolve to, how they're verified, what category
-they belong to, what should happen on hover. The same engine runs
-inside the VSCode extension (via WASM, in-process) and inside the
-Rust CLI binary (for `pre-commit` and CI). Same regex flavour, same
-semantics, in both hosts.
+Patterns declare their regex, the URL or local-file they resolve to,
+how they're verified, what category they belong to, and what should
+happen on hover. Same regex flavour, same semantics, in both hosts.
 
 ## Planning horizon
 
@@ -43,7 +40,7 @@ Anything past v0.4 is deliberately not planned in detail (see
 [`DESIGN.md` §19.5](./DESIGN.md)). The full per-version scope is in
 [`DESIGN.md` §19](./DESIGN.md).
 
-## What's in this repo today
+## Repo layout
 
 - [`DESIGN.md`](./DESIGN.md) — the working spec. Source of truth.
 - [`AGENTS.md`](./AGENTS.md) — conventions every contributor (human or
@@ -55,11 +52,8 @@ Anything past v0.4 is deliberately not planned in detail (see
   table-alignment script.
 - [`LICENSE`](./LICENSE) — Apache 2.0.
 
-No code, no `Cargo.toml`, no extension scaffold yet. Those land in
-focused follow-up merges (JSON Schema first, then the workspace
-scaffold, then CI plumbing, then v0.1's first feature). The intent
-behind a design-only initial merge is to give the design a real
-review surface before any code locks in decisions.
+The workspace, JSON Schema, extension scaffold, and CI plumbing land
+in focused follow-up merges before v0.1's first feature.
 
 ## What `coderef` is *not*
 
