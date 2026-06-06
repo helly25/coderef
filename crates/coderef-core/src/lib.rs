@@ -1,0 +1,32 @@
+//! coderef-core
+//!
+//! Engine for [coderef](https://github.com/helly25/coderef). This crate is
+//! deliberately host-call-free: no filesystem walking, no process spawning,
+//! no HTTP. That discipline is what allows the same crate to compile to a
+//! native CLI binary and to a WASM module used in-process by the `VSCode`
+//! extension (see `DESIGN.md` §14.5.1 for the architectural commitment).
+//!
+//! At v0.0.0 this is a placeholder so the workspace compiles. Real features
+//! land per the roadmap in `DESIGN.md` §19.
+
+#![doc(html_root_url = "https://docs.rs/coderef-core/0.0.0")]
+
+/// The crate version, exposed for the CLI's `--version` flag.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Returns a banner identifying the engine version. Used by the CLI and the
+/// WASM module to verify they're linked against the same `coderef-core`.
+#[must_use]
+pub fn banner() -> String {
+    format!("coderef-core {VERSION}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn banner_contains_version() {
+        assert!(banner().contains(VERSION));
+    }
+}

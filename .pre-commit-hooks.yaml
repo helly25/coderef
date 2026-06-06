@@ -1,0 +1,55 @@
+# pre-commit framework integration. See DESIGN.md §16.1.
+#
+# v0.0.0 status: the hooks declared here will not function until v0.1 ships
+# a real `coderef` binary via the npm wrapper. Until then, including any of
+# these in a `.pre-commit-config.yaml` will fail at hook invocation with an
+# error from the placeholder bin (exit 127). Consumers should defer adding
+# these hooks until v0.1.
+
+- id: coderef-check
+  name: coderef — verify changed source references
+  description: Resolve and validate references in changed lines
+  entry: coderef check --staged
+  language: node
+  pass_filenames: false
+  always_run: false
+
+- id: coderef-check-full
+  name: coderef — verify all source references
+  description: Resolve and validate every reference in the workspace
+  entry: coderef check
+  language: node
+  pass_filenames: false
+  stages: [manual]
+
+- id: coderef-doctor
+  name: coderef — integrity check of patterns
+  description: Static + corpus-driven overlap and ambiguity checks
+  entry: coderef doctor
+  language: node
+  pass_filenames: false
+
+# Opt-in hooks below — see DESIGN.md §16.1.1 / §11 / §19 for context.
+
+- id: coderef-changes
+  name: coderef — verify coupled-change blocks (v0.2)
+  description: IfChange/ThenChange enforcement on staged hunks
+  entry: coderef changes --staged
+  language: node
+  pass_filenames: false
+
+- id: coderef-commit-msg
+  name: coderef — verify commit-message references (v0.2)
+  description: Resolve and validate references found in the commit message
+  entry: coderef check --commit-msg
+  language: node
+  stages: [commit-msg]
+  pass_filenames: true
+
+- id: coderef-upgrade-check
+  name: coderef — enforce canonical marker form (v0.3)
+  description: Fail if any legacy TODO / FIXME markers exist that `coderef upgrade` would rewrite
+  entry: coderef upgrade --check-only
+  language: node
+  pass_filenames: false
+  stages: [manual]

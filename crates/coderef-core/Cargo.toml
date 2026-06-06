@@ -1,0 +1,23 @@
+[package]
+name         = "coderef-core"
+description  = "Core engine for coderef: config, variables, regex scanner, resolver, verifier"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+homepage.workspace     = true
+authors.workspace      = true
+
+[lints]
+workspace = true
+
+[lib]
+name = "coderef_core"
+
+[features]
+default = []
+# wasm build target. Stubs out std::process / std::env / fs walking on the
+# wasm32 target so the same crate compiles to a no-I/O library suitable for
+# in-process editor embedding (DESIGN.md §14.5.1).
+wasm    = []

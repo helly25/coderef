@@ -1,0 +1,64 @@
+{
+  "name": "coderef",
+  "displayName": "coderef",
+  "description": "Resolve, click-open, and verify regex-defined references in source code",
+  "keywords": [
+    "coderef",
+    "regex",
+    "references",
+    "todo",
+    "documentation"
+  ],
+  "version": "0.0.0",
+  "publisher": "helly25",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/helly25/coderef.git",
+    "directory": "extension"
+  },
+  "homepage": "https://github.com/helly25/coderef",
+  "bugs": "https://github.com/helly25/coderef/issues",
+  "engines": {
+    "vscode": "^1.92.0"
+  },
+  "categories": ["Linters", "Other"],
+  "activationEvents": [
+    "workspaceContains:.coderef.jsonc",
+    "workspaceContains:.coderef.json",
+    "workspaceContains:.config/coderef.jsonc",
+    "workspaceContains:.config/coderef.json"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "coderef",
+      "properties": {
+        "coderef.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Master switch for the coderef extension."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch":   "tsc -watch -p ./",
+    "lint":    "eslint src",
+    "package": "vsce package",
+    "publish": "vsce publish"
+  },
+  "devDependencies": {
+    "@eslint/js":               "^9.39.4",
+    "@types/node":              "^22.19.19",
+    "@types/vscode":            "^1.92.0",
+    "@typescript-eslint/eslint-plugin": "^8.60.0",
+    "@typescript-eslint/parser":        "^8.60.0",
+    "@vscode/vsce":             "^3.9.1",
+    "eslint":                   "^9.39.4",
+    "globals":                  "^15.15.0",
+    "typescript":               "^5.9.3",
+    "typescript-eslint":        "^8.60.0"
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "name": "@helly25/coderef",
+  "version": "0.0.0",
+  "description": "npm wrapper for the coderef CLI — downloads the right platform binary on install",
+  "keywords": [
+    "coderef",
+    "regex",
+    "references",
+    "todo",
+    "linter",
+    "pre-commit"
+  ],
+  "license": "Apache-2.0",
+  "author": "helly25",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/helly25/coderef.git",
+    "directory": "npm/coderef"
+  },
+  "homepage": "https://github.com/helly25/coderef",
+  "bugs": "https://github.com/helly25/coderef/issues",
+  "bin": {
+    "coderef": "./bin/coderef.js"
+  },
+  "files": [
+    "bin",
+    "install.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "postinstall": "node ./install.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
