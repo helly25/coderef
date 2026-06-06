@@ -1451,7 +1451,7 @@ repos:
 
 Same flag for `lefthook`/`husky` invocations.
 
-### 7.5 Language definitions
+### 7.5 Language definitions (v0.2)
 
 The prefix policy (§5.4.2) needs to know each file's comment syntax.
 `coderef` ships a built-in language table covering the common cases; users
@@ -1599,6 +1599,90 @@ on conflict. Setting an entry to `null` deletes the built-in (rare).
   rules apply. v0.3 may add region-aware detection.
 - **Shebang-overrides** — `#!/usr/bin/env python` makes a `.txt` file scan
   as Python if shebang detection is enabled (default on for executables).
+
+### 7.6 Multi-config monorepos via `extends:` (v0.4)
+
+A monorepo with multiple services often wants *different* coderef
+config per subtree — the API service points its `JIRA` pattern at one
+project key, the data service at another; the docs subtree uses local
+`DOCREF` shortcuts the rest of the monorepo doesn't need. v0.1–v0.3
+support one config per repo; v0.4 adds an `extends:` mechanism that
+keeps the workspace-rooted config as the *base* and lets subdirectories
+override specific blocks.
+
+```jsonc
+// /services/data/.coderef.jsonc
+{
+  "$schema": "../../schema/coderef.schema.json",
+  "extends": "../../.coderef.jsonc",
+  "variables": {
+    "jiraProject": "DATA"      // overrides the workspace default
+  },
+  "patterns": {
+    "data-internal": {
+      "regex":  "DATAREF\\((?<id>[A-Z0-9_]+)\\)",
+      "target": "${config:variables.dataBase}/${id}",
+      "category": "tickets"
+    }
+  }
+}
+```
+
+#### 7.6.1 Discovery
+
+When the scanner enters a directory, it walks *upward* looking for the
+nearest `.coderef.jsonc` (or `.config/coderef.jsonc`). If that file
+contains `extends`, the parent config is loaded recursively until a
+config with no `extends` is found (the *base*). The scanner caches the
+resolved chain per directory.
+
+The workspace-root config is always loadable; if a subdirectory has
+no own config, it inherits the workspace root's by default.
+
+#### 7.6.2 Merge semantics
+
+| Block                  | Merge strategy                                                                                                |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `variables`            | Shallow merge by key; child wins. References to `${config:variables.x}` resolve through the merged set.       |
+| `defaults`             | Deep merge of `prefix` etc.                                                                                   |
+| `patterns`             | Shallow merge by pattern id; child entries replace parent entries with the same id.                           |
+| `languages`            | Shallow merge by language id; child entries replace parent entries.                                           |
+| `blame`                | Deep merge: `userMapping` and `ignoreAuthors` concatenate (child entries take precedence on duplicate keys).  |
+| `verification`         | Deep merge.                                                                                                   |
+| `networkProfiles`      | Shallow merge by profile name.                                                                                |
+| `profileSelection`     | Child replaces parent if present.                                                                             |
+| `submodules`           | Child replaces parent if present.                                                                             |
+| `concurrency`          | Single workspace-level lock; child `lockPath` ignored — concurrency is workspace-wide, not per-subdirectory.  |
+| `integrity`            | Shallow merge by key; `checks.*` deep-merged.                                                                 |
+| `ignore`               | Concatenate parent + child globs.                                                                             |
+
+References that match a pattern declared in the *child* config but the
+file lives in a *grand-child* directory: resolved via the child's
+config (the nearest config in the walk-up).
+
+#### 7.6.3 Doctor checks
+
+| Check                       | Severity | Trigger                                                                                                |
+| --------------------------- | -------- | ------------------------------------------------------------------------------------------------------ |
+| `extends.cyclic`            | error    | The `extends` chain forms a cycle.                                                                     |
+| `extends.unresolved`        | error    | The referenced file does not exist.                                                                    |
+| `extends.outsideWorkspace`  | warning  | The referenced file is outside `${workspaceFolder}`; allowed but flagged as a portability concern.     |
+| `extends.shadowedPattern`   | info     | A child config redeclares a pattern id from the parent — usually intentional, surfaced for visibility. |
+
+#### 7.6.4 Limitations
+
+- The `extends` chain is *resolved at config load*, not lazily. A
+  subdirectory config that extends a sibling's config will load both
+  even if no file in the subdirectory ever matches the sibling's
+  patterns.
+- Doctor runs **once per resolved config**, not once per directory.
+  Overlapping pattern definitions across two unrelated child configs
+  are not cross-checked. The reasoning: those configs serve different
+  subtrees by design.
+- The `extends` value is a *workspace-relative or relative* path, not
+  a URL. Remote inheritance ("extends from a package") is not supported
+  and is unlikely to be — it leads to the same shadow-manifest failure
+  modes §22.1 rejects for repo coupling.
 
 ---
 
@@ -2139,29 +2223,30 @@ Exit codes follow the project convention (§13.1).
 
 The integrity checker (§9) extends to coupled-change patterns:
 
-| Check                        | Default severity | Description                                                                                        |
-| ---------------------------- | ---------------- | -------------------------------------------------------------------------------------------------- |
-| `coupled.orphanIfChange`     | error            | IfChange marker with no matching ThenChange.                                                       |
-| `coupled.orphanThenChange`   | error            | ThenChange marker with no preceding IfChange.                                                      |
-| `coupled.soloId`             | warning          | Only one block uses a given id — the coupling is meaningless.                                      |
-| `coupled.malformedTarget`    | error            | A target token cannot be parsed under §10.2 grammar.                                               |
-| `coupled.unresolvedTarget`   | error            | A target's file or line range does not exist in the working tree.                                  |
-| `coupled.blockOverlap`       | error            | Two non-nested blocks overlap.                                                                     |
-| `coupled.composableTypo`     | warning          | Id text *almost* matches a pattern's regex but fails to resolve.                                   |
-| `coupled.renameSuspected`    | warning          | A target path doesn't exist but `git log --follow --diff-filter=R` suggests a recent rename.       |
-| `coupled.unboundedGlobAll`   | warning          | `{all}` glob matches more than `integrity.coupled.maxAllGlob` files (default 50).                  |
-| `checksum.drift`             | error            | Stored hash in `.coderef-checksums.json` differs from current content hash (§10.14). v0.2.         |
-| `checksum.untrackedRange`    | info             | A `path:N-M` target appears in source but isn't tracked in the management file. v0.2.              |
-| `checksum.staleEntry`        | warning          | Management file has an entry whose `target` no longer resolves (file deleted, out-of-range). v0.2. |
-| `checksum.normalizationOnly` | info             | Drift is purely whitespace / line-ending; safe to `coderef checksum --update --apply`. v0.2.       |
-| `checksum.malformedEntry`    | error            | `.coderef-checksums.json` fails JSON parse or schema validation. v0.2.                             |
-| `label.orphanOpen`           | error            | `Label('name')` without matching `EndLabel`.                                                       |
-| `label.orphanClose`          | error            | `EndLabel` not preceded by a still-open `Label(...)`.                                              |
-| `label.duplicateInFile`      | error            | Two `Label('name')` in one file.                                                                   |
-| `label.unknownReference`     | error            | `ThenChange(/path:foo)` where `foo` isn't a label in `/path`.                                      |
-| `label.unused`               | info             | A `Label('name')` no `ThenChange` ever references.                                                 |
-| `label.ambiguousName`        | error            | Label name is purely numeric or matches `N-M` (collides with line-range parsing).                  |
-| `label.nesting`              | warning          | A `Label` overlaps another non-nested `Label` in the same file.                                    |
+| Check                        | Default severity | Description                                                                                                                                                                    |
+| ---------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `coupled.orphanIfChange`     | error            | IfChange marker with no matching ThenChange.                                                                                                                                   |
+| `coupled.orphanThenChange`   | error            | ThenChange marker with no preceding IfChange.                                                                                                                                  |
+| `coupled.soloId`             | warning          | Only one block uses a given id — the coupling is meaningless.                                                                                                                  |
+| `coupled.malformedTarget`    | error            | A target token cannot be parsed under §10.2 grammar.                                                                                                                           |
+| `coupled.unresolvedTarget`   | error            | A target's file or line range does not exist in the working tree.                                                                                                              |
+| `coupled.blockOverlap`       | error            | Two non-nested blocks overlap.                                                                                                                                                 |
+| `coupled.composableTypo`     | warning          | Id text *almost* matches a pattern's regex but fails to resolve.                                                                                                               |
+| `coupled.renameSuspected`    | warning          | A target path doesn't exist but `git log --follow --diff-filter=R` suggests a recent rename.                                                                                   |
+| `coupled.unboundedGlobAll`   | warning          | `{all}` glob matches more than `integrity.coupled.maxAllGlob` files (default 50).                                                                                              |
+| `coupled.cycle`              | warning          | Shape A target graph contains a directed cycle (A → B → A). Often intentional — surfaces so the author confirms or breaks. Use `NoVerify(coderef:ifchange)` to declare intent. |
+| `checksum.drift`             | error            | Stored hash in `.coderef-checksums.json` differs from current content hash (§10.14). v0.2.                                                                                     |
+| `checksum.untrackedRange`    | info             | A `path:N-M` target appears in source but isn't tracked in the management file. v0.2.                                                                                          |
+| `checksum.staleEntry`        | warning          | Management file has an entry whose `target` no longer resolves (file deleted, out-of-range). v0.2.                                                                             |
+| `checksum.normalizationOnly` | info             | Drift is purely whitespace / line-ending; safe to `coderef checksum --update --apply`. v0.2.                                                                                   |
+| `checksum.malformedEntry`    | error            | `.coderef-checksums.json` fails JSON parse or schema validation. v0.2.                                                                                                         |
+| `label.orphanOpen`           | error            | `Label('name')` without matching `EndLabel`.                                                                                                                                   |
+| `label.orphanClose`          | error            | `EndLabel` not preceded by a still-open `Label(...)`.                                                                                                                          |
+| `label.duplicateInFile`      | error            | Two `Label('name')` in one file.                                                                                                                                               |
+| `label.unknownReference`     | error            | `ThenChange(/path:foo)` where `foo` isn't a label in `/path`.                                                                                                                  |
+| `label.unused`               | info             | A `Label('name')` no `ThenChange` ever references.                                                                                                                             |
+| `label.ambiguousName`        | error            | Label name is purely numeric or matches `N-M` (collides with line-range parsing).                                                                                              |
+| `label.nesting`              | warning          | A `Label` overlaps another non-nested `Label` in the same file.                                                                                                                |
 
 ### 10.10 Editor UX
 
@@ -2921,6 +3006,7 @@ coderef check --commit-msg <file>       # lint a commit-message file (§16.1.1, 
 coderef check --commit-msg --stdin      # lint commit message read from stdin
 coderef check --report json|sarif|text  # output format (sarif/json land in v0.2)
 coderef check --profile <name>          # override profile selection
+coderef check --offline                 # skip all HTTP verification; use cached results only; fail if cache miss (§13.5)
 coderef changes                         # coupled-change check (§10.8, v0.2)
 coderef upgrade [--apply|--diff|--check-only]   # rewrite legacy markers (§11.6, v0.3); --check-only fails if any legacy markers exist
 coderef checksum {add,verify,update,remove,list}   # drift management (§10.14, v0.4)
@@ -3247,6 +3333,15 @@ releases. Read-only consumers of the cache (`coderef check`,
 lock that blocks until a `cache clear` or `upgrade --apply` finishes,
 so they never see torn state.
 
+**Offline mode.** `coderef check --offline` skips every HTTP request
+and uses the cached status for each URL. Cache misses (a URL not
+present in `http.json`) are reported as `verify.cacheMiss`
+(default severity `error`; configurable). Use cases: airgapped CI,
+flaky-network local development, deterministic CI where the cache is
+populated by an earlier pipeline stage. Pairs with
+`coderef check --no-cache` (the inverse — ignore the cache and hit the
+network) for full re-verification.
+
 ### 13.6 Reporting
 
 Text (default): grouped by file, colored. SARIF for GitHub/GitLab annotations.
@@ -3417,6 +3512,44 @@ If the WASM build trips the hard cap during development, the design
 falls back to v0.1's spawn-per-scan path until the cap can be regained.
 Doctor reports the WASM bundle size during build.
 
+#### 14.5.2 WASM module boundary (what `coderef-core-wasm` does *not* do)
+
+The architectural promise is "same engine in both hosts." That promise
+holds only because the WASM module is intentionally *less* than the
+CLI: it does scanning, matching, and variable resolution against byte
+buffers handed in by the host, and nothing else. Anything that touches
+the outside world stays in the native binary. The boundary is
+load-bearing — it's why we can claim engine parity without quietly
+maintaining two parallel implementations.
+
+| Capability                                                                        | WASM module | Native binary |
+| --------------------------------------------------------------------------------- | :---------: | :-----------: |
+| Regex compile + scan (over a buffer)                                              |      ✓      |       ✓       |
+| Variable resolution (`builtin`/`capture:`/`env:`/`config:`/`file:`/`ref:`/`ide:`) |      ✓      |       ✓       |
+| Reference resolver (URL templates, local-path shortcuts)                          |      ✓      |       ✓       |
+| Doctor static checks at config load                                               |      ✓      |       ✓       |
+| Synthetic-match overlap analysis (§9.4)                                           |      ✓      |       ✓       |
+| Label discovery + block pairing (§10.5 Pass 1)                                    |      ✓      |       ✓       |
+| **Filesystem walk** (workspace, gitignore)                                        |      ✗      |       ✓       |
+| **HTTP verifier** (`HEAD`/`GET`, anchor parsing, cache I/O)                       |      ✗      |       ✓       |
+| **`git diff` / `git blame` parsing**                                              |      ✗      |       ✓       |
+| **Process spawning**                                                              |      ✗      |       ✓       |
+| **Async runtime** (`tokio`)                                                       |      ✗      |       ✓       |
+| **`coderef upgrade` / `checksum` writes** (tempfile + persist)                    |      ✗      |       ✓       |
+| **Workspace lock** acquisition (§11.10)                                           |      ✗      |       ✓       |
+
+The WASM module reads buffers via `wasm-bindgen` arguments; it has no
+`std::fs`, no network capability, no `std::process`. The host (VSCode
+extension) walks the workspace via `vscode.workspace.findFiles`, reads
+file bytes, and passes them in — exactly as the native binary's
+`ignore`-crate file walker would do, except the I/O happens on the
+host side. Identical output by construction.
+
+This is also why §17's threat model is two-tier: the WASM module can't
+exfiltrate data or open subprocesses even if a hostile config were
+loaded, because those capabilities aren't compiled in. The CLI has the
+full surface and carries the corresponding hardening.
+
 ### 14.6 Visual config editor (v0.3)
 
 The config is the primary surface users interact with after installing the
@@ -3553,9 +3686,12 @@ that jumps to the right offset.
   the schema is rich enough that source editing is already pleasant.
 - **v0.2**: the **visual block editor** described above (blocks pane,
   style picker, field editors, live validation, round-trip).
-- **v0.3**: **custom styles** (user-saved templates), **dependency-graph
-  panel** for variables, **regex-builder wizard** for users who prefer
-  drag-and-drop over typing regex.
+- **v0.3**: **custom styles** (user-saved templates),
+  **variable-dependency-graph panel**, **coupled-change graph view**
+  (visualises IfChange/ThenChange relationships across the workspace
+  — surfaces the `coupled.cycle` warnings from §10.9 as a clickable
+  graph rather than just a doctor message), **regex-builder wizard**
+  for users who prefer drag-and-drop over typing regex.
 
 ### 14.7 References browser (v0.2)
 
@@ -4055,6 +4191,24 @@ alongside; the install script verifies before extracting.
   argument quoting; we never interpolate user input into a shell command.
 - **Cache poisoning.** Cache key is the resolved URL; cache values are status
   codes only, not body content (preview-cache is separate and opt-in).
+- **HTTPS certificate validation.** The verifier uses `reqwest` with TLS
+  validation enabled by default — server certificates are checked
+  against the host's system trust store at every request. There is no
+  per-pattern opt-out for cert validation. Internal CAs are handled by
+  configuring the system trust store (`SSL_CERT_FILE`, `SSL_CERT_DIR`
+  on Linux/macOS; the Windows trust store on Windows) at the OS level,
+  not by disabling validation. Patterns pointing at internal hosts
+  with internal CAs simply need the CA installed; coderef does not ship
+  a `verify.tls = false` knob, and design-wise will not.
+- **WASM vs CLI sandboxing posture.** The architectural split (§14.5.1,
+  §14.5.2) means the *only* code path with side effects is the native
+  CLI binary. The WASM module used in-process by the VSCode extension
+  has no filesystem access, no network capability, no `std::process`,
+  no async runtime — it operates only on byte buffers handed in by the
+  host. A hostile config loaded by the editor *cannot* exfiltrate data
+  or open subprocesses through the WASM path because those
+  capabilities are not compiled into the WASM target. The CLI carries
+  the full surface and the corresponding hardening above.
 
 ---
 
@@ -4254,6 +4408,11 @@ non-immediate features.
   `IfChange(JIRA(PROJ-123))` groups via the resolved reference target
   through the existing variable + reference engine. Small marginal
   cost over the v0.2 Shape A + B implementation; high differentiator.
+- **Multi-config monorepos via `extends:`** (§7.6): per-subdirectory
+  `.coderef.jsonc` files inherit from the workspace-root config and
+  override per-block. The merge semantics, doctor checks, and the
+  "no remote inheritance" non-goal are all in §7.6. Resolves the
+  long-standing Open Question #1.
 
 ### 19.5 Post-v0.4 — not planned in detail
 
@@ -4296,8 +4455,8 @@ committed):
 
 ## 20. Open questions
 
-1. **Multi-config files.** Some monorepos want per-subdirectory pattern sets.
-   Defer to v0.3 (`extends:` mechanism).
+1. **Multi-config files for monorepos.** Resolved: scheduled for v0.4 via
+   the `extends:` mechanism. See §7.6.
 2. **Anchors for non-Markdown.** Heading slugs are well-defined for Markdown;
    for `.rst`/`.adoc` we need adapters. v0.2.
 3. **Comment detection for "exotic" languages** (Haskell, Erlang, Lisp). Ship
