@@ -17,6 +17,7 @@
 pub mod check;
 pub mod comment;
 pub mod config;
+pub mod doctor;
 pub mod error;
 pub mod pattern;
 pub mod reference;
