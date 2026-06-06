@@ -127,12 +127,8 @@ fn find_subsequence(haystack: &[u8], needle: &[u8], from: usize) -> Option<usize
     if needle.is_empty() || haystack.len() < from + needle.len() {
         return None;
     }
-    for i in from..=haystack.len().saturating_sub(needle.len()) {
-        if &haystack[i..i + needle.len()] == needle {
-            return Some(i);
-        }
-    }
-    None
+    (from..=haystack.len().saturating_sub(needle.len()))
+        .find(|&i| &haystack[i..i + needle.len()] == needle)
 }
 
 /// Find the closing delimiter for a string literal opened at `from`,
