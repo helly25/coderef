@@ -115,6 +115,7 @@ pub fn scan_file(content: &str, opts: &ScanOptions) -> Result<Vec<Reference>, Sc
 
             refs.push(Reference {
                 pattern_id: compiled.id.clone(),
+                pattern_kind: compiled.kind,
                 file: opts.file.to_string(),
                 line,
                 column,
