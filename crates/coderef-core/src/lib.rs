@@ -13,6 +13,8 @@
 
 #![doc(html_root_url = "https://docs.rs/coderef-core/0.0.0")]
 
+#[cfg(not(target_arch = "wasm32"))]
+pub mod check;
 pub mod comment;
 pub mod config;
 pub mod error;
@@ -21,6 +23,8 @@ pub mod reference;
 pub mod scan;
 pub mod severity;
 pub mod variables;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod verify;
 
 /// The crate version, exposed for the CLI's `--version` flag.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

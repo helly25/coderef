@@ -8,6 +8,8 @@
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
+use crate::config::PatternKind;
+
 /// A single reference found in a source file.
 ///
 /// `byte_*` are zero-indexed byte offsets into the file content; `line`
@@ -16,6 +18,12 @@ use serde::{Deserialize, Serialize};
 pub struct Reference {
     /// Pattern id that produced this reference.
     pub pattern_id: String,
+
+    /// Resolved pattern kind. The verifier dispatches on this rather
+    /// than sniffing the target string, so a `kind: "local"` target
+    /// of `http://...` (legal under §6.1) still goes through the
+    /// local-path verifier.
+    pub pattern_kind: PatternKind,
 
     /// File path the reference was found in, workspace-relative when
     /// produced by the workspace scanner; absolute when produced from a
