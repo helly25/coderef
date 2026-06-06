@@ -1,0 +1,7 @@
+// Used to assert that pattern declaration order is preserved (IndexMap).
+{
+  "patterns": {
+    "zzz-last":  { "regex": "Z", "target": "https://z/" },
+    "aaa-first": { "regex": "A", "target": "https://a/" }
+  }
+}

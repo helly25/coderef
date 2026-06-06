@@ -1,0 +1,25 @@
+// Minimal v0.1 config used by integration tests.
+{
+  "variables": {
+    "usersBase": "https://users.example.com"
+  },
+  "ignore": ["**/node_modules/**", "**/dist/**"],
+  "patterns": {
+    "todo-user": {
+      "regex":  "TODO\\(@(?<user>[a-zA-Z][\\w.-]{0,63})\\)",
+      "target": "${config:usersBase}/${user}",
+      "title":  "User profile: ${user}"
+    },
+    "docref": {
+      "regex":  "DOCREF\\((?<path>/?[^)\\s#]+)\\)",
+      "kind":   "local",
+      "target": "${path}",
+      "resolve": {
+        "root":       "${workspaceFolder}",
+        "anchorMode": "workspace",
+        "extensions": [".md", ".mdx"],
+        "indexFiles": ["README.md"]
+      }
+    }
+  }
+}
