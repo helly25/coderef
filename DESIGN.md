@@ -4481,7 +4481,7 @@ step.
 Planning horizon: **v0.1 → v0.4**. Each version is a credible self-contained
 milestone with a clear theme. v0.5+ deliberately not planned in detail —
 post-v0.4 we revisit the picture once the design has been validated by
-real use; see §19.5.
+real use; see §20.5.
 
 ### v0.1 — Minimum viable: pattern engine + WASM-shared core + basic editor
 
