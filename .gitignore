@@ -1,0 +1,29 @@
+# Build artifacts
+out/
+dist/
+*.vsix
+*.tsbuildinfo
+
+# Dependencies
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Test runners
+.vscode-test/
+coverage/
+
+# Coderef runtime
+.coderef-cache/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.idea/
+*.swp
+
+# Research / discussion log — internal-only for now.
+# May be promoted to a tracked doc when the project ships.
+RESEARCH.md
