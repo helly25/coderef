@@ -33,6 +33,7 @@ fn main() -> ExitCode {
             }
         },
         Some("list") => cmd_list(args.collect()),
+        Some("check") => cmd_check(args.collect()),
         Some(other) => {
             eprintln!("coderef: unknown subcommand `{other}`");
             eprintln!();
@@ -155,6 +156,165 @@ fn cmd_list(args: Vec<String>) -> ExitCode {
     }
 }
 
+/// `coderef check [--config <path>] [--report text|json] [--timeout-ms N] <root>`
+///
+/// Scans the workspace at `<root>` and verifies every discovered
+/// reference. Exits 0 if all references resolved (or were skipped),
+/// 1 if any reference broke, 2 on usage / config / scan errors.
+#[allow(clippy::too_many_lines)] // arg parsing + dispatch is naturally long
+fn cmd_check(args: Vec<String>) -> ExitCode {
+    let mut config_path: Option<String> = None;
+    let mut report: Report = Report::Text;
+    let mut timeout_ms: u64 = 10_000;
+    let mut root: Option<String> = None;
+
+    let mut it = args.into_iter();
+    while let Some(arg) = it.next() {
+        match arg.as_str() {
+            "--config" | "-c" => {
+                let Some(path) = it.next() else {
+                    eprintln!("coderef check: --config requires a value");
+                    return ExitCode::from(2);
+                };
+                config_path = Some(path);
+            }
+            "--report" => {
+                let Some(kind) = it.next() else {
+                    eprintln!("coderef check: --report requires `text` or `json`");
+                    return ExitCode::from(2);
+                };
+                report = match kind.as_str() {
+                    "text" => Report::Text,
+                    "json" => Report::Json,
+                    other => {
+                        eprintln!(
+                            "coderef check: --report must be `text` or `json` (got `{other}`)"
+                        );
+                        return ExitCode::from(2);
+                    }
+                };
+            }
+            "--timeout-ms" => {
+                let Some(n) = it.next() else {
+                    eprintln!("coderef check: --timeout-ms requires a value");
+                    return ExitCode::from(2);
+                };
+                let Ok(v) = n.parse() else {
+                    eprintln!("coderef check: --timeout-ms must be a positive integer");
+                    return ExitCode::from(2);
+                };
+                timeout_ms = v;
+            }
+            "--help" | "-h" => {
+                println!("Usage: coderef check [--config <path>] [--report text|json] [--timeout-ms N] <root>");
+                println!();
+                println!(
+                    "  --config <path>     Path to .coderef.jsonc (default: <root>/.coderef.jsonc)"
+                );
+                println!("  --report text|json  Output format (default: text)");
+                println!("  --timeout-ms N      Per-request timeout in ms (default: 10000)");
+                println!();
+                println!("Exit codes: 0 = all references resolved (or skipped); 1 = at least");
+                println!("one reference broke; 2 = usage / config / scan error.");
+                return ExitCode::SUCCESS;
+            }
+            _ if root.is_none() => root = Some(arg),
+            _ => {
+                eprintln!("coderef check: unexpected argument `{arg}`");
+                return ExitCode::from(2);
+            }
+        }
+    }
+    let Some(root) = root else {
+        eprintln!("coderef check: missing <root>");
+        eprintln!(
+            "usage: coderef check [--config <path>] [--report text|json] [--timeout-ms N] <root>"
+        );
+        return ExitCode::from(2);
+    };
+
+    let cfg_path =
+        config_path.unwrap_or_else(|| format!("{}/.coderef.jsonc", root.trim_end_matches('/')));
+    let cfg = match coderef_core::config::Config::from_file(&cfg_path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("coderef check: failed to load config `{cfg_path}`: {e}");
+            return ExitCode::from(2);
+        }
+    };
+
+    let opts = coderef_core::verify::VerifyOptions {
+        timeout: std::time::Duration::from_millis(timeout_ms),
+        workspace_root: std::path::PathBuf::from(&root),
+        ..Default::default()
+    };
+
+    let result = coderef_core::check::check_workspace(&root, &cfg, &opts);
+    let report_value = match result {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("coderef check: {e}");
+            return ExitCode::from(2);
+        }
+    };
+
+    match report {
+        Report::Text => print_text_report(&report_value),
+        Report::Json => match serde_json::to_string_pretty(&report_value) {
+            Ok(s) => println!("{s}"),
+            Err(e) => {
+                eprintln!("coderef check: JSON encoding failed: {e}");
+                return ExitCode::from(3);
+            }
+        },
+    }
+
+    if report_value.passed() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(1)
+    }
+}
+
+enum Report {
+    Text,
+    Json,
+}
+
+fn print_text_report(report: &coderef_core::check::CheckReport) {
+    use coderef_core::verify::VerifyOutcome;
+    for r in &report.results {
+        let prefix = match &r.outcome {
+            VerifyOutcome::Ok => "ok    ",
+            VerifyOutcome::Skipped { .. } => "skip  ",
+            _ => "BROKEN",
+        };
+        let detail = match &r.outcome {
+            VerifyOutcome::Ok => String::new(),
+            VerifyOutcome::BrokenStatus { status } => format!("  (status {status})"),
+            VerifyOutcome::BrokenNetwork { reason } => format!("  ({reason})"),
+            VerifyOutcome::NotFound { path } => format!("  (no such file: {path})"),
+            VerifyOutcome::Skipped { reason } => format!("  ({reason})"),
+        };
+        println!(
+            "{prefix}  {file}:{line}:{col}  [{id}]  →  {target}{detail}",
+            file = r.reference.file,
+            line = r.reference.line,
+            col = r.reference.column,
+            id = r.reference.pattern_id,
+            target = r.reference.target,
+        );
+    }
+    println!();
+    println!(
+        "Checked {total} reference(s): {ok} ok, {broken} broken, {skipped} skipped",
+        total = report.total,
+        ok = report.ok,
+        broken = report.broken,
+        skipped = report.skipped,
+    );
+}
+
 fn print_help() {
     println!(
         "{banner}
@@ -166,9 +326,12 @@ Subcommands implemented in v0.0.x foundation:
   list [opts] <root>           Walk <root> and dump every reference found
                                --config <path>  Override config location
                                --json           Emit JSON
+  check [opts] <root>          Scan + verify every reference; exit 1 on failure
+                               --config <path>  Override config location
+                               --report json    Emit JSON report
+                               --timeout-ms N   Per-request timeout (default 10000)
 
 Subcommands planned per DESIGN.md §20 (not yet implemented):
-  check       Verify references in source files
   changes     Coupled-change verifier (v0.2)
   upgrade     Rewrite legacy markers (v0.3)
   explain     Show resolution for a single reference token

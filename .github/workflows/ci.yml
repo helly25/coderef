@@ -68,6 +68,38 @@ jobs:
           echo "$out" | grep -q "TODO(@ci)" || { echo "scanner did not find planted reference"; exit 1; }
           rm -rf "$tmp"
 
+      - name: coderef check — local-path verify smoke
+        shell: bash
+        run: |
+          # Plant a local docref to a real file and one to a missing
+          # file. Confirm the binary exits 1 (one broken), reports both
+          # correctly, and that --report json emits valid JSON.
+          tmp=$(mktemp -d)
+          cat > "$tmp/.coderef.jsonc" <<'EOF'
+          { "patterns": { "docref": {
+              "regex": "DOCREF\\((?<path>/?[^)\\s#]+)\\)",
+              "kind":  "local",
+              "target": "${path}",
+              "scope": { "commentsOnly": true }
+          } } }
+          EOF
+          mkdir -p "$tmp/docs"
+          echo "real" > "$tmp/docs/exists.md"
+          echo "// DOCREF(/docs/exists.md)"   > "$tmp/a.rs"
+          echo "// DOCREF(/docs/missing.md)"  > "$tmp/b.rs"
+          set +e
+          ./target/release/coderef check "$tmp"
+          ec=$?
+          set -e
+          if [ "$ec" -ne 1 ]; then
+            echo "expected exit 1 (one broken ref), got $ec"
+            exit 1
+          fi
+          # And the JSON form must parse + report broken=1.
+          json=$(./target/release/coderef check --report json "$tmp" || true)
+          echo "$json" | python3 -c 'import json,sys; r=json.load(sys.stdin); assert r["broken"]==1 and r["ok"]==1, r'
+          rm -rf "$tmp"
+
       - name: Regenerate JSON Schema from Rust types
         run: cargo run --bin coderef-gen-schema --locked
 
