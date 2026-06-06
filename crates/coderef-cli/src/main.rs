@@ -34,6 +34,7 @@ fn main() -> ExitCode {
         },
         Some("list") => cmd_list(args.collect()),
         Some("check") => cmd_check(args.collect()),
+        Some("doctor") => cmd_doctor(args.collect()),
         Some(other) => {
             eprintln!("coderef: unknown subcommand `{other}`");
             eprintln!();
@@ -315,6 +316,142 @@ fn print_text_report(report: &coderef_core::check::CheckReport) {
     );
 }
 
+/// `coderef doctor [--config <path>] [--report text|json] [--no-scan] [<root>]`
+///
+/// Runs static + (optionally) scan-dependent integrity checks against
+/// the config. Exits 0 if no error-severity diagnostics, 1 if any.
+fn cmd_doctor(args: Vec<String>) -> ExitCode {
+    let mut config_path: Option<String> = None;
+    let mut report: Report = Report::Text;
+    let mut scan = true;
+    let mut root: Option<String> = None;
+
+    let mut it = args.into_iter();
+    while let Some(arg) = it.next() {
+        match arg.as_str() {
+            "--config" | "-c" => {
+                let Some(path) = it.next() else {
+                    eprintln!("coderef doctor: --config requires a value");
+                    return ExitCode::from(2);
+                };
+                config_path = Some(path);
+            }
+            "--report" => {
+                let Some(kind) = it.next() else {
+                    eprintln!("coderef doctor: --report requires `text` or `json`");
+                    return ExitCode::from(2);
+                };
+                report = match kind.as_str() {
+                    "text" => Report::Text,
+                    "json" => Report::Json,
+                    other => {
+                        eprintln!(
+                            "coderef doctor: --report must be `text` or `json` (got `{other}`)"
+                        );
+                        return ExitCode::from(2);
+                    }
+                };
+            }
+            "--no-scan" => scan = false,
+            "--help" | "-h" => {
+                println!("Usage: coderef doctor [--config <path>] [--report text|json] [--no-scan] [<root>]");
+                println!();
+                println!("  --config <path>     Path to .coderef.jsonc (default: <root>/.coderef.jsonc, or ./.coderef.jsonc)");
+                println!("  --report text|json  Output format (default: text)");
+                println!("  --no-scan           Static checks only (skip pattern.unused which needs a scan)");
+                println!();
+                println!("Exit codes: 0 = no errors; 1 = at least one error-severity diagnostic;");
+                println!("2 = usage / config error.");
+                return ExitCode::SUCCESS;
+            }
+            _ if root.is_none() => root = Some(arg),
+            _ => {
+                eprintln!("coderef doctor: unexpected argument `{arg}`");
+                return ExitCode::from(2);
+            }
+        }
+    }
+
+    let cfg_path = config_path.unwrap_or_else(|| match &root {
+        Some(r) => format!("{}/.coderef.jsonc", r.trim_end_matches('/')),
+        None => "./.coderef.jsonc".into(),
+    });
+    let cfg = match coderef_core::config::Config::from_file(&cfg_path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("coderef doctor: failed to load config `{cfg_path}`: {e}");
+            return ExitCode::from(2);
+        }
+    };
+
+    let report_value = if scan {
+        let r = root.as_deref().unwrap_or(".");
+        match coderef_core::doctor::run_doctor_with_workspace(r, &cfg) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("coderef doctor: {e}");
+                return ExitCode::from(2);
+            }
+        }
+    } else {
+        coderef_core::doctor::run_doctor(&cfg)
+    };
+
+    match report {
+        Report::Text => print_doctor_text(&report_value),
+        Report::Json => match serde_json::to_string_pretty(&report_value) {
+            Ok(s) => println!("{s}"),
+            Err(e) => {
+                eprintln!("coderef doctor: JSON encoding failed: {e}");
+                return ExitCode::from(3);
+            }
+        },
+    }
+
+    if report_value.passed() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(1)
+    }
+}
+
+fn print_doctor_text(report: &coderef_core::doctor::DoctorReport) {
+    use coderef_core::severity::Severity;
+    for d in &report.diagnostics {
+        let sev = match d.severity {
+            Severity::Error => "ERROR  ",
+            Severity::Warning => "warning",
+            Severity::Info => "info   ",
+            Severity::Hint => "hint   ",
+            Severity::Off => "off    ",
+        };
+        let pid = d
+            .pattern_id
+            .as_deref()
+            .map(|p| format!("[{p}] "))
+            .unwrap_or_default();
+        println!(
+            "{sev}  {check}  {pid}{message}",
+            check = d.check,
+            message = d.message
+        );
+        if let Some(h) = &d.hint {
+            println!("           hint: {h}");
+        }
+    }
+    if !report.diagnostics.is_empty() {
+        println!();
+    }
+    println!(
+        "{total} diagnostic(s): {errors} error, {warnings} warning, {infos} info, {hints} hint",
+        total = report.total,
+        errors = report.errors,
+        warnings = report.warnings,
+        infos = report.infos,
+        hints = report.hints,
+    );
+}
+
 fn print_help() {
     println!(
         "{banner}
@@ -330,6 +467,10 @@ Subcommands implemented in v0.0.x foundation:
                                --config <path>  Override config location
                                --report json    Emit JSON report
                                --timeout-ms N   Per-request timeout (default 10000)
+  doctor [opts] [<root>]       Static + scan-dependent integrity checks
+                               --config <path>  Override config location
+                               --report json    Emit JSON report
+                               --no-scan        Skip the workspace scan (static only)
 
 Subcommands planned per DESIGN.md §20 (not yet implemented):
   changes     Coupled-change verifier (v0.2)

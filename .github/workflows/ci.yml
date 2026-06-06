@@ -100,6 +100,41 @@ jobs:
           echo "$json" | python3 -c 'import json,sys; r=json.load(sys.stdin); assert r["broken"]==1 and r["ok"]==1, r'
           rm -rf "$tmp"
 
+      - name: coderef doctor — static checks smoke
+        shell: bash
+        run: |
+          # Plant a config that triggers every v0.1 check category.
+          tmp=$(mktemp -d)
+          cat > "$tmp/.coderef.jsonc" <<'EOF'
+          {
+            "patterns": {
+              "ok":            { "regex": "OK\\(@(?<u>\\w+)\\)", "target": "x/${u}" },
+              "noTarget":      { "regex": "X" },
+              "unusedCap":     { "regex": "(?<extra>X)", "target": "x" },
+              "badRegex":      { "regex": "(?<u>X", "target": "x" },
+              "futureNs":      { "regex": "X", "target": "x/${git:branch}" },
+              "configUnknown": { "regex": "X", "target": "${config:missingVar}" }
+            }
+          }
+          EOF
+          set +e
+          out=$(./target/release/coderef doctor --no-scan "$tmp")
+          ec=$?
+          set -e
+          echo "$out"
+          if [ "$ec" -ne 1 ]; then
+            echo "expected exit 1 (errors present), got $ec"
+            exit 1
+          fi
+          # Must produce at least one diagnostic of each expected kind.
+          for check in pattern.targetMissing pattern.regexInvalid pattern.captureUnused \
+                       pattern.variableConfigUnknown pattern.variableNamespaceFuture; do
+            echo "$out" | grep -q "$check" || { echo "missing diagnostic: $check"; exit 1; }
+          done
+          json=$(./target/release/coderef doctor --no-scan --report json "$tmp" || true)
+          echo "$json" | python3 -c 'import json,sys; r=json.load(sys.stdin); assert r["errors"] >= 3, r'
+          rm -rf "$tmp"
+
       - name: Regenerate JSON Schema from Rust types
         run: cargo run --bin coderef-gen-schema --locked
 
