@@ -1,0 +1,166 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel superseded runs on the same ref.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  rust:
+    name: Rust workspace
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (per rust-toolchain.toml)
+        run: |
+          rustup toolchain install
+          rustup component add rustfmt clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: cargo check
+        run: cargo check --all-targets --all-features --locked
+
+      - name: cargo test
+        run: cargo test --all-features --locked
+
+      - name: cargo build --release (smoke)
+        run: cargo build --release --locked
+
+      - name: coderef binary --version
+        run: ./target/release/coderef --version
+
+  # ---------------------------------------------------------------------------
+  extension:
+    name: VSCode extension (TS)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: extension
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: tsc --noEmit
+        run: npx tsc --noEmit -p ./
+
+      - name: eslint
+        run: npx eslint src || true   # v0.0.0 has no eslint config yet
+
+  # ---------------------------------------------------------------------------
+  npm-wrapper:
+    name: npm wrapper smoke
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: npm/coderef
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: npm install (runs postinstall)
+        run: npm install --no-audit --no-fund
+
+      - name: bin runs (expect exit 127, no binary at v0.0.0)
+        run: |
+          set +e
+          node ./bin/coderef.js
+          code=$?
+          if [ $code -ne 127 ]; then
+            echo "expected exit 127, got $code"
+            exit 1
+          fi
+
+  # ---------------------------------------------------------------------------
+  schema:
+    name: JSON Schema validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install jsonschema
+        run: python -m pip install --upgrade pip jsonschema
+
+      - name: Validate the schema parses as valid JSON
+        run: python -c "import json; json.load(open('schema/coderef.schema.json'))"
+
+      - name: Validate example configs against the schema
+        run: |
+          python3 tools/validate-config.py \
+            schema/coderef.schema.json \
+            examples/minimal.coderef.jsonc
+
+  # ---------------------------------------------------------------------------
+  docs:
+    name: Docs hygiene (table alignment + cross-refs)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Run table aligner (must be idempotent)
+        run: |
+          python3 tools/align-md-tables.py \
+            DESIGN.md README.md AGENTS.md CLAUDE.md \
+            schema/README.md npm/coderef/README.md extension/README.md docs/README.md
+          if ! git diff --exit-code -- '*.md' '**/*.md'; then
+            echo ""
+            echo "Tables in the above files are not aligned. Re-run:"
+            echo "  python3 tools/align-md-tables.py DESIGN.md README.md ..."
+            exit 1
+          fi
+
+      - name: Verify §-cross-references in DESIGN.md
+        shell: bash
+        run: |
+          set -euo pipefail
+          headers=$(grep -oE '^#+ [0-9]+(\.[0-9]+)*' DESIGN.md | sed 's/^#* //')
+          refs=$(grep -oE '§[0-9]+(\.[0-9]+)*' DESIGN.md | sed 's/^§//' | sort -u)
+          missing=0
+          for r in $refs; do
+            if ! echo "$headers" | grep -qxE "$r"; then
+              echo "MISSING TARGET: §$r"
+              missing=1
+            fi
+          done
+          exit $missing
+
+      - name: Code-fence balance check
+        run: |
+          n=$(grep -c '^```' DESIGN.md)
+          if [ $((n % 2)) -ne 0 ]; then
+            echo "Unbalanced code fences in DESIGN.md: $n"
+            exit 1
+          fi
