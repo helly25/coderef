@@ -14,6 +14,16 @@ repository = "https://github.com/helly25/coderef"
 homepage   = "https://github.com/helly25/coderef"
 authors    = ["Marcus Boerger (helly25)"]
 
+[workspace.dependencies]
+serde         = { version = "1.0", features = ["derive"] }
+serde_json    = { version = "1.0", features = ["preserve_order"] }
+jsonc-parser  = { version = "0.27", features = ["serde"] }
+schemars      = { version = "0.8", features = ["preserve_order", "indexmap2"] }
+fancy-regex   = "0.14"
+thiserror     = "2.0"
+anyhow        = "1.0"
+indexmap      = { version = "2", features = ["serde"] }
+
 [workspace.lints.rust]
 unsafe_code = "forbid"
 
@@ -21,9 +31,20 @@ unsafe_code = "forbid"
 all      = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
 nursery  = { level = "warn", priority = -1 }
-# Allowlist for pedantic lints that are too noisy for now.
+# Allowlist for pedantic lints that don't catch real bugs for our use case.
 module_name_repetitions = "allow"
 must_use_candidate      = "allow"
+missing_errors_doc      = "allow"
+missing_panics_doc      = "allow"
+option_if_let_else      = "allow"
+default_trait_access    = "allow"
+match_same_arms         = "allow"
+return_self_not_must_use = "allow"
+missing_const_for_fn    = "allow"
+ref_option              = "allow"
+# `${name}` template strings are a coderef domain primitive, not a Rust
+# format-args mistake. Clippy can't tell the difference.
+literal_string_with_formatting_args = "allow"
 
 [profile.release]
 lto       = "thin"

@@ -15,9 +15,23 @@ workspace = true
 [lib]
 name = "coderef_core"
 
+[[bin]]
+name              = "coderef-gen-schema"
+path              = "src/bin/gen_schema.rs"
+required-features = []
+
 [features]
 default = []
 # wasm build target. Stubs out std::process / std::env / fs walking on the
 # wasm32 target so the same crate compiles to a no-I/O library suitable for
 # in-process editor embedding (DESIGN.md §14.5.1).
 wasm    = []
+
+[dependencies]
+serde        = { workspace = true }
+serde_json   = { workspace = true }
+jsonc-parser = { workspace = true }
+schemars     = { workspace = true }
+fancy-regex  = { workspace = true }
+thiserror    = { workspace = true }
+indexmap     = { workspace = true }
