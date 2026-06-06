@@ -81,3 +81,31 @@ silently choosing one.
   (`npm/coderef/`). See `DESIGN.md` §4.3 for the layout.
 - Pre-commit hooks for the repo itself follow the `vscode-iwyu` sibling
   project's style.
+
+## Testing discipline
+
+Tests are required, not optional. Full reference: `DESIGN.md` §17.
+Quick rules for every PR:
+
+- **Every behaviour change adds or updates tests at the matching level**
+  (unit, integration, subcommand, schema, conformance, end-to-end).
+  See `DESIGN.md` §17.1 for the level table.
+- **No one-shots.** A manual verification ("I ran it and it worked")
+  must be resolved into one of two states before the PR is reviewable:
+  (a) codified as a committed test that runs in CI, or (b) written as
+  a `docs/test-plan.md` entry that captures what was verified and what
+  test should eventually replace the note. "I'll add the test later"
+  is not an option.
+- **Conformance is enforced.** The CLI's `--report json` output is the
+  contract. The WASM module, the LSP server (v0.4), and any future
+  plugin are golden-diffed against it on a shared fixture corpus
+  (`tests/conformance/`). Divergence fails CI; if the plugin and the
+  CLI disagree, the plugin is wrong by construction.
+- **Test naming**: `test_<subject>_<scenario>_<expected>` — reads as
+  English at the failure site. Examples in `DESIGN.md` §17.6.
+- **Bug fixes carry a regression test** that fails on the broken
+  version and passes on the fix.
+
+`docs/test-plan.md` is the holding pen for verifications that aren't
+yet codified. Empty is good; long is a code-smell signal that some
+test needs writing.

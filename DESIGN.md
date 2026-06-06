@@ -53,7 +53,7 @@ first-class:
   drag-reorder for multi-target lists, and source-pane round-trip for
   everything the form can't cover (§14.6).
 
-Version tags in brackets show the slot in §19's roadmap. v0.1 — the
+Version tags in brackets show the slot in §20's roadmap. v0.1 — the
 minimum viable release — keeps to **`url`/`local` single-target
 patterns, basic HTTP verification, click-to-open in VSCode, and
 pre-commit integration**; everything else above is part of v0.2–v0.4.
@@ -187,7 +187,7 @@ exists but is not portable. `coderef` ports the idea.
 | **Category**                | A declared semantic grouping (`files` / `people` / `tickets` / `standards` / `urls` / `coupled-change` / `other` + user-defined) used by the references browser and category-aware doctor checks (§5.7).   |
 | **Label / EndLabel**        | A named region inside a file (`Label('name') ... EndLabel`) that coupled-change targets can address by name (`path:label-name`) — refactor-stable alternative to line ranges (§10).                        |
 | **Checksum entry**          | A row in `.coderef-checksums.json` pairing a `path:N-M` target with a stored content hash for drift detection (§10.14, v0.4).                                                                              |
-| **Submodule pass-through**  | Treating a `git submodule` directory as part of the workspace for scanning and coupled-change resolution; the *only* cross-repo mechanism supported (§6.4, v0.4; non-goal of linked-repo manifests §22.1). |
+| **Submodule pass-through**  | Treating a `git submodule` directory as part of the workspace for scanning and coupled-change resolution; the *only* cross-repo mechanism supported (§6.4, v0.4; non-goal of linked-repo manifests §23.1). |
 | **Profile-scoped variable** | A `${config:variables.x}` whose resolved value depends on the active network profile (§12.2.1).                                                                                                            |
 | **Workspace lock**          | The advisory `flock` on `<workspace>/.coderef/lock` that serialises write-mode subcommands (`upgrade --apply`, `checksum {add,update,remove}`, `cache clear`) — §11.10.                                    |
 
@@ -330,7 +330,7 @@ are golden-tested against `coderef --report json` for the same inputs.
 | **WASM module (v0.1)**       | `@helly25/coderef-core-wasm`  | `coderef-core` compiled via `wasm-bindgen`. Editor imports in-process for scan/hover/document-link hot paths. Hard cap: 1.5 MB gzipped; target ~600 KB. **No** I/O (file walker stays host-side via `vscode.workspace.findFiles`); **no** HTTP (verifier stays in the binary). |
 | VSCode extension             | `helly25.coderef` (TS)        | Imports `@helly25/coderef-core-wasm` from v0.1 for hot-path scanning; spawns the bin for verify/upgrade/changes/doctor/LSP (§14.5.1).                                                                                                                                          |
 | LSP server (v0.4)            | same Rust bin in `--lsp` mode | Implements `documentLink`, `hover`, `publishDiagnostics`, `codeAction`. Neovim/Helix/JetBrains plug in via standard LSP. WASM build of `coderef-core` is also available to LSP clients that prefer in-process embedding.                                                       |
-| JetBrains plugin (post-v0.4) | thin Kotlin LSP-client        | Mostly `plugin.xml` + LSP plumbing. Backlog (§19.5).                                                                                                                                                                                                                           |
+| JetBrains plugin (post-v0.4) | thin Kotlin LSP-client        | Mostly `plugin.xml` + LSP plumbing. Backlog (§20.5).                                                                                                                                                                                                                           |
 
 Key Rust dependencies for `coderef-core` / `coderef-cli`:
 
@@ -1113,7 +1113,7 @@ declared tag) is the inverse direction — `coderef`'s standard
 verification (target file/URL exists) covers it when the unique
 pattern produces a local-file target. For pure
 intra-codebase tag-ref enforcement without target resolution,
-**tagref** remains the recommended tool (see §22.1's compose-don't-port
+**tagref** remains the recommended tool (see §23.1's compose-don't-port
 principle).
 
 ---
@@ -1258,7 +1258,7 @@ Given a resolved local target file and a captured `${anchor}`:
 
 For non-Markdown targets (`.html`, `.adoc`, `.rst`), the same algorithm
 applies with format-specific parsers; the slugifier table extends in
-v0.2 (open question §20). For unknown extensions, anchor verification
+v0.2 (open question §21). For unknown extensions, anchor verification
 is skipped with an `info` diagnostic so the file resolves but the
 anchor doesn't gate the run.
 
@@ -1296,7 +1296,7 @@ already on disk. `coderef` can simply treat each submodule as more
 workspace — the scanner walks in, the diff parser sees changes inside,
 coupled-change can span the boundary — without any fetch, auth, or
 shadow-manifest machinery. Submodules are the *one* cross-repo
-mechanism we support; see §22 for the deliberate rejection of
+mechanism we support; see §23 for the deliberate rejection of
 linked-repo manifests.
 
 ```jsonc
@@ -1727,7 +1727,7 @@ config (the nearest config in the walk-up).
 - The `extends` value is a *workspace-relative or relative* path, not
   a URL. Remote inheritance ("extends from a package") is not supported
   and is unlikely to be — it leads to the same shadow-manifest failure
-  modes §22.1 rejects for repo coupling.
+  modes §23.1 rejects for repo coupling.
 
 ---
 
@@ -3163,7 +3163,7 @@ Mechanics:
   `ifPresent` (default) verifies only when the URL contains a fragment;
   `always` makes the anchor required; `never` skips.
 - **No JS execution.** SPAs with JavaScript-injected anchors are not
-  supported; matches lychee. Documented as a limitation (§20).
+  supported; matches lychee. Documented as a limitation (§21).
 
 For multi-target patterns (§5.3.1), `verify.anchor` is per-target —
 some targets may demand anchor verification, others may skip. Each
@@ -3264,7 +3264,7 @@ the cache entry stores the parsed body fields, not the raw response.
 | Auth failure (401/403)                      | URL-existence check fails first; `responseFilter` not reached. Reported as `auth.failed`.                                                 |
 | Non-JSON response with `field`-based filter | `responseFilter.bodyNotJson` (error). Likely the pattern's `url` is wrong, or `Accept` is being ignored by the server.                    |
 | Multiple targets per pattern                | `responseFilter` is per-target — each target carries its own (or inherits the pattern-level default).                                     |
-| Linear / GraphQL                            | `field` walks GraphQL response paths the same way. Linear's complexity-based rate limit needs care; see §20 open question.                |
+| Linear / GraphQL                            | `field` walks GraphQL response paths the same way. Linear's complexity-based rate limit needs care; see §21 open question.                |
 
 #### 13.3.3 Retry & backoff (transient failures)
 
@@ -3444,7 +3444,7 @@ Coupled-change: 14 blocks examined, 2 violations
   target of a multi-target reference (§5.3.1), and **"Mark verified"** that
   removes the `?` prefix of an unverified reference (§5.6).
 - **`vscode.languages.registerCodeLensProvider(...)`** *(design only;
-  post-v0.4 backlog, §19.5)* — one CodeLens per **multi-target
+  post-v0.4 backlog, §20.5)* — one CodeLens per **multi-target
   reference** declaration showing `▸ 3 alternates · open · verified 1d
   ago`. Two-phase loading: `provideCodeLenses()` returns the count +
   range (cheap, runs on every edit); `resolveCodeLens()` fills in
@@ -3590,7 +3590,7 @@ file bytes, and passes them in — exactly as the native binary's
 `ignore`-crate file walker would do, except the I/O happens on the
 host side. Identical output by construction.
 
-This is also why §17's threat model is two-tier: the WASM module can't
+This is also why §18's threat model is two-tier: the WASM module can't
 exfiltrate data or open subprocesses even if a hostile config were
 loaded, because those capabilities aren't compiled in. The CLI has the
 full surface and carries the corresponding hardening.
@@ -4240,7 +4240,163 @@ alongside; the install script verifies before extracting.
 
 ---
 
-## 17. Security Considerations
+## 17. Testing discipline
+
+The architectural commitments earlier in this document — CLI as the
+behavioural source of truth (§4.1.1), host-call-free `coderef-core`
+(§14.5.2), conformance across hosts (§15.1) — are only credible if the
+project's *test* surface reflects them. This section is a hard
+requirement, not aspirational: every PR landing on `main` carries the
+tests that make its claims verifiable.
+
+### 17.1 Coverage at every level
+
+| Level                  | What's tested                                          | Where it lives                                                  |
+| ---------------------- | ------------------------------------------------------ | --------------------------------------------------------------- |
+| Unit                   | One function / module behaviour                        | `mod tests` inside the relevant `.rs` file                      |
+| Integration (crate)    | One crate's external API                               | `crates/coderef-core/tests/`                                    |
+| Subcommand             | CLI behaviour with mock fs/net                         | `crates/coderef-cli/tests/`                                     |
+| Schema                 | JSON Schema accepts valid configs and rejects invalid  | `schema/tests/` (positive + negative example configs)           |
+| Conformance            | CLI output ≡ WASM output ≡ LSP output                  | `tests/conformance/` (corpus + golden JSON outputs, §17.4)      |
+| Extension end-to-end   | VSCode extension with a real workspace                 | `extension/test/` via `@vscode/test-electron`                   |
+| Docs hygiene           | Tables aligned, cross-refs resolve, fences balanced    | `.github/workflows/ci.yml` docs job                             |
+
+All levels are exercised in CI. A change that affects behaviour at
+level N must add or update tests at level N.
+
+### 17.2 No one-shots
+
+A *one-shot* is a manual verification done once, then forgotten — e.g.
+running a script in a terminal to check a JSON Schema parses, pasting
+an example config into a validator, eyeballing CLI output during
+development.
+
+One-shots are useful *during development*. They are **not** a substitute
+for committed tests. Every one-shot has exactly one of two fates
+before the PR that depended on it is merged:
+
+1. **Codified.** The verification logic moves into a committed test
+   that runs in CI thereafter. Future regressions are caught
+   automatically; future contributors can see the assumption the test
+   encodes.
+2. **Planned.** If the one-shot is genuinely too expensive or
+   impractical to codify immediately (e.g. "I clicked through the
+   visual editor's drag-reorder UX and it worked"), it becomes a
+   written entry in `docs/test-plan.md` that captures *what was
+   verified*, *how*, and *what test should eventually replace this
+   note*. The entry is the bridge until a proper test exists.
+
+A PR is not complete until every one-shot it relies on has been
+resolved into either path 1 or path 2. "I ran it and it worked"
+without a follow-up is a stale anchor — it gives a false sense of
+coverage and erodes with every refactor.
+
+### 17.3 Tests vs assertions
+
+Tests verify behaviour; assertions verify invariants. Both have a role:
+
+- **Tests** catch known regressions and known edge cases. They are
+  the project's executable specification.
+- **Assertions** catch unknown bugs at the moment they manifest
+  inside running code. `debug_assert!` in Rust, `console.assert` in
+  TS, `assert` in Python tooling. They are guard rails for invariants
+  that should be impossible to violate.
+
+Default: prefer tests. Assertions are for things the type system
+cannot already enforce.
+
+### 17.4 Conformance harness (per §4.1.1)
+
+The CLI is the behavioural source of truth. Conformance tests reify
+that contract end-to-end:
+
+- **Fixture inputs.** A curated corpus of configs + source files lives
+  in `tests/conformance/fixtures/`. Each fixture is a directory with a
+  `.coderef.jsonc` and one or more source files representative of a
+  pattern category (URL refs, local refs, coupled-change, multi-target,
+  unverified markers, etc.).
+- **Golden outputs.** For each fixture, the output of
+  `coderef <subcmd> --report json` is captured and committed under
+  `tests/conformance/golden/`. These files are the contract.
+- **Plugin verification.** The WASM module (and, from v0.4, the LSP
+  server) runs the same inputs and produces JSON. CI diffs each
+  plugin's output against the golden. Any divergence fails the
+  conformance job.
+- **Regenerating goldens.** When a fixture's output legitimately
+  changes (a new feature, a bug fix), the golden is regenerated with
+  `cargo run --bin regen-conformance` and the diff appears in the PR
+  for review. A regen with no design-doc / changelog entry is a code
+  review red flag.
+
+### 17.5 What gets a test, when
+
+Mandatory in the PR that introduces the change:
+
+- Every new public function / API endpoint → unit test.
+- Every new CLI flag → integration (subcommand) test exercising both states.
+- Every schema-affecting change → positive and negative schema tests.
+- Every behaviour change visible to a plugin → updated conformance fixture and golden.
+- Every bug fix → regression test that fails on the broken version.
+
+Optional / deferable with a `docs/test-plan.md` entry:
+
+- Visual UI tests (extension hover rendering, code-action menus, the
+  v0.3 visual config editor's drag-and-reorder UX). Manual verification
+  is documented until a UI test harness lands.
+- Performance benchmarks (`cargo bench`) — tracked once v0.1 is
+  feature-complete.
+
+### 17.6 Test naming
+
+Format: `test_<subject>_<scenario>_<expected>`.
+
+Examples:
+- `test_parse_config_with_extends_resolves_relative_paths`
+- `test_anchor_verifier_unknown_slug_in_markdown_returns_broken`
+- `test_upgrade_with_blame_unmapped_author_falls_back_to_email_localpart`
+
+The convention reads as English at the call site (`failures: test_parse_config_with_extends_resolves_relative_paths`) and surfaces what regressed at a glance.
+
+### 17.7 Meta-checks (doctor over the tests themselves)
+
+A `cargo run --bin doctor -- --tests` mode (post-v0.1) flags the
+project itself when discipline slips:
+
+| Check                         | Severity | Trigger                                                                                                       |
+| ----------------------------- | -------- | ------------------------------------------------------------------------------------------------------------- |
+| `test.untestedSubcommand`     | warning  | A `coderef` subcommand has no integration test under `crates/coderef-cli/tests/`.                             |
+| `test.untestedFeatureFlag`    | info     | A v0.X+ feature flag is referenced in code but no test exercises both states.                                 |
+| `test.untestedSchemaPath`     | warning  | A schema field is reachable by example configs but has no positive schema test.                               |
+| `test.stalePlanEntry`         | info     | `docs/test-plan.md` entry older than 90 days without a linked committed test.                                 |
+| `test.conformanceGoldenStale` | warning  | A conformance fixture's source changed but its golden didn't (or vice versa).                                 |
+
+These checks run only when the developer invokes `--tests` explicitly;
+they're meta-discipline, not user-facing.
+
+### 17.8 Where this applies to v0.1
+
+The minimum credible v0.1 ships with:
+
+- Unit tests on every public function of `coderef-core` and `coderef-cli`.
+- Integration tests for `check`, `check --staged`, `check --changed`,
+  `list`, `explain`, `doctor`, `cache clear`.
+- Schema positive tests: `examples/minimal.coderef.jsonc` validates clean.
+- Schema negative tests: at least three malformed configs in
+  `schema/tests/invalid/` that the validator rejects with documented
+  error messages.
+- Conformance harness scaffolding (fixtures + golden generator) even
+  if the corpus is small at v0.1 — sets the shape for v0.2 to grow into.
+- VSCode extension end-to-end smoke test: activate, open a file with
+  one pattern, verify a `DocumentLink` exists at the expected range.
+
+No PR for any of those is reviewable without its tests. The CI is
+configured to fail at the lint stage for missing tests on new
+public APIs, not as a separate "merge but please add tests later"
+step.
+
+---
+
+## 18. Security Considerations
 
 - **Regex DoS.** All user-supplied regexes are compiled at config load. The
   `regex` crate is DFA-based and immune to catastrophic backtracking;
@@ -4293,7 +4449,7 @@ alongside; the install script verifies before extracting.
 
 ---
 
-## 18. Distribution & Versioning
+## 19. Distribution & Versioning
 
 - **Rust binary:** built per platform via `cargo dist` (or hand-written CI
   matrix) for `darwin-{amd64,arm64}`, `linux-{amd64,arm64,musl}`,
@@ -4320,7 +4476,7 @@ alongside; the install script verifies before extracting.
 
 ---
 
-## 19. Roadmap
+## 20. Roadmap
 
 Planning horizon: **v0.1 → v0.4**. Each version is a credible self-contained
 milestone with a clear theme. v0.5+ deliberately not planned in detail —
@@ -4378,6 +4534,12 @@ design is built to avoid (§14.5.1).
   custom profiles. Full profile model (canary detection, internal/
   external split) lands in v0.3.
 - Example config + `pre-commit-hooks.yaml` in `examples/`.
+- **Test scaffolding per §17.8**: unit tests on every public function
+  of `coderef-core` / `coderef-cli`; integration tests for every CLI
+  subcommand; positive + negative schema tests; conformance harness
+  scaffolding (fixtures + golden generator + CI diff job); one VSCode
+  extension end-to-end smoke test. CI fails PRs that add public APIs
+  without tests.
 
 ### v0.2 — Coupled-change + categories + commit messages + browser
 
@@ -4475,13 +4637,13 @@ complexity into one-click setup.
 The release where `coderef` becomes credible across editors and across
 repos (within reason). Substantially smaller than the earlier v0.4
 sketch — checksum drift, semantic response filtering, CodeLens, and
-tag uniqueness all moved to the post-v0.4 backlog (§19.5) as
+tag uniqueness all moved to the post-v0.4 backlog (§20.5) as
 non-immediate features.
 
 - **Submodule pass-through** (§6.4): opt-in `submodules.follow: true`
   lets the scanner walk into `git submodule`-checked-out trees and
   coupled-change blocks span the boundary. The *only* cross-repo
-  mechanism we support — linked-repo manifests rejected (§22.1).
+  mechanism we support — linked-repo manifests rejected (§23.1).
 - **LSP server mode** (`coderef lsp`): same Rust binary in a different
   transport. VSCode extension migrates to LSP. Neovim / Helix /
   Sublime LSP / JetBrains LSP plugin gain parity. The WASM build of
@@ -4497,7 +4659,7 @@ non-immediate features.
   "no remote inheritance" non-goal are all in §7.6. Resolves the
   long-standing Open Question #1.
 
-### 19.5 Post-v0.4 — not planned in detail
+### 20.5 Post-v0.4 — not planned in detail
 
 After v0.4 ships, we revisit the design with real-use signal before
 committing to further scope. The standing backlog (none of this is
@@ -4517,7 +4679,7 @@ committed):
   already serve discovery; CodeLens adds visual noise that most users
   disable.
 - **Tag uniqueness** (§5.9 design). tagref already owns this niche;
-  the §22.1 stance ("compose, don't port") applies — we point users
+  the §23.1 stance ("compose, don't port") applies — we point users
   at tagref rather than building the same feature inside coderef.
 - **JetBrains plugin** (or other native IDE plugins beyond the LSP
   shipped in v0.4).
@@ -4536,7 +4698,7 @@ committed):
 
 ---
 
-## 20. Open questions
+## 21. Open questions
 
 1. **Multi-config files for monorepos.** Resolved: scheduled for v0.4 via
    the `extends:` mechanism. See §7.6.
@@ -4597,7 +4759,7 @@ committed):
 
 ---
 
-## 21. Appendix — Example end-to-end config
+## 22. Appendix — Example end-to-end config
 
 ```jsonc
 {
@@ -4911,7 +5073,7 @@ Pre-upgrade input that `coderef upgrade --apply` would canonicalise:
 
 ---
 
-## 22. Appendix — Out-of-scope features (deliberately deferred)
+## 23. Appendix — Out-of-scope features (deliberately deferred)
 
 - LLM-suggested ref completion or auto-classification.
 - LLM-assisted blame-mapping or username inference.
@@ -4934,7 +5096,7 @@ Pre-upgrade input that `coderef upgrade --apply` would canonicalise:
   they contain; adding AST awareness would double the surface area for
   a use case adjacent tools already nail.
 
-### 22.1 The cross-repo non-goal
+### 23.1 The cross-repo non-goal
 
 `coderef`'s only cross-repo mechanism is `git submodule` pass-through
 (§6.4). We deliberately do **not** support:

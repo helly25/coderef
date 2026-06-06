@@ -37,8 +37,8 @@ happen on hover. Same regex flavour, same semantics, in both hosts.
 | **v0.4** | LSP server mode + composable coupled-change IDs + git-submodule pass-through.                                                                         |
 
 Anything past v0.4 is deliberately not planned in detail (see
-[`DESIGN.md` §19.5](./DESIGN.md)). The full per-version scope is in
-[`DESIGN.md` §19](./DESIGN.md).
+[`DESIGN.md` §20.5](./DESIGN.md)). The full per-version scope is in
+[`DESIGN.md` §20](./DESIGN.md).
 
 ## Repo layout
 
@@ -66,7 +66,7 @@ in focused follow-up merges before v0.1's first feature.
 - Not an AST-aware refactoring tool — `coderef upgrade` is regex-only
   by design; for AST work, use jscodeshift / ast-grep / comby.
 
-See [`DESIGN.md` §22](./DESIGN.md) for the full out-of-scope list and
+See [`DESIGN.md` §23](./DESIGN.md) for the full out-of-scope list and
 the reasoning.
 
 ## License
