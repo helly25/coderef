@@ -50,10 +50,27 @@ Anything past v0.4 is deliberately not planned in detail (see
   to `AGENTS.md`.
 - [`tools/align-md-tables.py`](./tools/align-md-tables.py) — the
   table-alignment script.
+- [`.coderef.jsonc`](./.coderef.jsonc) — the project's own coderef
+  config; the engine dogfoods against this on every CI run.
 - [`LICENSE`](./LICENSE) — Apache 2.0.
 
-The workspace, JSON Schema, extension scaffold, and CI plumbing land
-in focused follow-up merges before v0.1's first feature.
+## Pre-commit hooks (v0.1)
+
+The `.pre-commit-hooks.yaml` declares the hook *shape* consumers
+will install once the npm wrapper ships a binary (v0.2). For v0.1
+the dogfood-able path is `language: system` against a locally-built
+binary; see [`.pre-commit-config.yaml`](./.pre-commit-config.yaml)
+for the working example used by this repo's own CI:
+
+```yaml
+- id: coderef-doctor
+  entry: cargo run --quiet --release --bin coderef -- doctor --no-scan .
+  language: system
+
+- id: coderef-check
+  entry: cargo run --quiet --release --bin coderef -- check .
+  language: system
+```
 
 ## What `coderef` is *not*
 
