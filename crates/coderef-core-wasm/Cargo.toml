@@ -1,0 +1,38 @@
+[package]
+name         = "coderef-core-wasm"
+description  = "WASM bindings for coderef-core (used by the VSCode extension and other editor hosts)"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+homepage.workspace     = true
+authors.workspace      = true
+
+[lints]
+workspace = true
+
+[lib]
+# cdylib for WASM; rlib so the crate's tests can still run on the host.
+crate-type = ["cdylib", "rlib"]
+name       = "coderef_core_wasm"
+
+[dependencies]
+coderef-core       = { path = "../coderef-core" }
+serde              = { workspace = true }
+serde_json         = { workspace = true }
+wasm-bindgen       = "0.2"
+serde-wasm-bindgen = "0.6"
+
+[dev-dependencies]
+# Host-side tests of the binding logic; the wasm32 build is tested via
+# `wasm-pack` + node smoke in CI (see .github/workflows/ci.yml).
+wasm-bindgen-test = "0.3"
+
+# wasm-pack-specific metadata. wasm-opt with bulk-memory enabled — the
+# bundled binaryen rejects rustc's memory.fill / memory.copy emissions
+# at default settings; the feature flag opts into the proposal. Without
+# this opt, the unstripped WASM weighs in around 1.7 MB; with it,
+# under 300 KB.
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ["-O", "--enable-bulk-memory"]
