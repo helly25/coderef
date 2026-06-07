@@ -11,24 +11,7 @@ import { test } from "node:test";
 // where `vscode` isn't on the resolver path; we override before our
 // own modules import it.
 import { type EngineReference } from "./wasmEngine";
-
-// --- Minimal `vscode` API surface used by providers.ts -------------
-// We can't import the real `vscode` module outside the extension host;
-// mock the bits used at runtime so the pure-function paths still run.
-
-declare const globalThis: { mockVscodeRegistered?: boolean };
-
-function registerVscodeMock(): void {
-  if (globalThis.mockVscodeRegistered) return;
-  globalThis.mockVscodeRegistered = true;
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const Module = require("node:module");
-  const orig = Module._resolveFilename;
-  Module._resolveFilename = function (request: string, ...rest: unknown[]): string {
-    if (request === "vscode") return require.resolve("./__vscode_mock");
-    return orig.call(this, request, ...rest);
-  };
-}
+import { registerVscodeMock } from "./__test_setup";
 
 registerVscodeMock();
 
