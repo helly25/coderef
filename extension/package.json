@@ -45,13 +45,29 @@
           "description": "Optional explicit path to the .coderef.jsonc, relative to the workspace root. Empty = auto-detect."
         }
       }
+    },
+    "commands": [
+      {
+        "command": "coderef.explainReference",
+        "title": "coderef: Explain reference at cursor",
+        "category": "coderef"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "coderef.explainReference",
+          "group": "navigation@1",
+          "when": "editorTextFocus"
+        }
+      ]
     }
   },
   "scripts": {
     "compile":      "tsc -p ./",
     "watch":        "tsc -watch -p ./",
     "lint":         "eslint src",
-    "test":         "node --test --import tsx src/providers.test.ts",
+    "test":         "node --test --import tsx 'src/*.test.ts'",
     "bundle-wasm":  "node ./scripts/bundle-wasm.cjs",
     "build":        "npm run compile && npm run bundle-wasm",
     "vscode:prepublish": "npm run build",

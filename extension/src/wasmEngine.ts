@@ -64,6 +64,27 @@ export interface EngineReference {
   in_comment: boolean;
 }
 
+/** One match returned by `explain_text`. */
+export interface ExplainMatch {
+  pattern_id: string;
+  pattern_kind: "url" | "local" | "ifchange" | "command";
+  description: string | null;
+  matched_text: string;
+  captures: Record<string, string>;
+  target: string;
+  title: string | null;
+  priority: number;
+  scope_notes: string[];
+  resolution_warnings: string[];
+}
+
+/** Full `explain_text` result. */
+export interface ExplainReport {
+  input: string;
+  matches: ExplainMatch[];
+  non_matching_pattern_ids: string[];
+}
+
 interface WasmModule {
   version(): string;
   banner(): string;
@@ -75,6 +96,7 @@ interface WasmModule {
     file: string,
   ): EngineReference[];
   doctor_static(config_json: string): unknown;
+  explain_text(config_json: string, input: string): ExplainReport;
 }
 
 let cached: WasmModule | null = null;
@@ -142,4 +164,11 @@ export function scanBuffer(
 ): EngineReference[] {
   const configJson = JSON.stringify(config);
   return loadModule().scan_buffer(content, configJson, languageExt, file);
+}
+
+export function explainText(
+  config: EngineConfig,
+  input: string,
+): ExplainReport {
+  return loadModule().explain_text(JSON.stringify(config), input);
 }

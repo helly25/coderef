@@ -16,5 +16,5 @@
     "noUnusedParameters": true
   },
   "include": ["src/**/*"],
-  "exclude": ["src/**/*.test.ts", "src/__vscode_mock.ts"]
+  "exclude": ["src/**/*.test.ts", "src/__vscode_mock.ts", "src/__test_setup.ts"]
 }

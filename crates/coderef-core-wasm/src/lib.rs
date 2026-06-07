@@ -115,6 +115,20 @@ pub fn scan_buffer(
     to_js(&refs)
 }
 
+/// Explain what each configured pattern would do with `input`.
+///
+/// Mirrors the CLI's `coderef explain` subcommand; returns an
+/// `ExplainReport` (`{ input, matches: [...],
+/// non_matching_pattern_ids: [...] }`). Used by the `VSCode`
+/// extension's "Explain reference" command.
+#[wasm_bindgen]
+pub fn explain_text(config_json: &str, input: &str) -> Result<JsValue, JsValue> {
+    let cfg: Config =
+        serde_json::from_str(config_json).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let report = coderef_core::explain::explain(&cfg, input);
+    to_js(&report)
+}
+
 /// Run the static doctor checks against a config. The workspace-
 /// dependent `pattern.unused` is unavailable from WASM (no walker);
 /// hosts that want it should call the CLI for that check.

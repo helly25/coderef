@@ -13,6 +13,7 @@
 
 import * as vscode from "vscode";
 
+import { explainReferenceCommand } from "./commands";
 import { findConfigPath, loadConfigFrom, type LoadedConfig } from "./configLoader";
 import {
   CoderefDocumentLinkProvider,
@@ -54,6 +55,13 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.languages.registerHoverProvider(
       { scheme: "file" },
       new CoderefHoverProvider(cache, () => currentConfig),
+    ),
+  );
+
+  // Commands.
+  context.subscriptions.push(
+    vscode.commands.registerCommand("coderef.explainReference", () =>
+      explainReferenceCommand(cache, () => currentConfig),
     ),
   );
 

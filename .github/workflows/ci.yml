@@ -206,12 +206,18 @@ jobs:
           }
           console.log('version:', v);
 
-          // 2. parse_config()
+          // 2. parse_config() — exercises every field the extension
+          //    might encounter (description, scope, severity) so a
+          //    Pattern-struct change without a wasm-pack rebuild is
+          //    caught here rather than at extension activation.
           const cfgJsonc = `{
             "patterns": {
               "todo": {
+                "description": "GitHub @user mention inside a TODO marker",
                 "regex": "TODO\\\\(@(?<user>\\\\w+)\\\\)",
-                "target": "https://x/${'$'}{user}"
+                "target": "https://x/${'$'}{user}",
+                "scope": { "commentsOnly": true },
+                "severity": { "pattern.unused": "warning" }
               }
             }
           }`;
@@ -219,6 +225,10 @@ jobs:
           const cfgJson = JSON.stringify(cfg);
           if (!cfgJson.includes('"todo"')) {
             console.error('parse_config missing pattern:', cfgJson);
+            process.exit(1);
+          }
+          if (!cfgJson.includes('GitHub @user mention')) {
+            console.error('parse_config dropped description (WASM may be stale):', cfgJson);
             process.exit(1);
           }
 
@@ -244,6 +254,21 @@ jobs:
             process.exit(1);
           }
           console.log('doctor_static: ok (errors=' + report.errors + ')');
+
+          // 5. explain_text() — drives the extension's
+          //    coderef.explainReference command. The shape returned
+          //    must include `matches` (array) and
+          //    `non_matching_pattern_ids` (array).
+          const exp = m.explain_text(cfgJson, 'TODO(@bob)');
+          if (!Array.isArray(exp.matches) || exp.matches.length !== 1) {
+            console.error('explain_text: expected 1 match, got', exp);
+            process.exit(1);
+          }
+          if (exp.matches[0].target !== 'https://x/bob') {
+            console.error('explain_text: bad resolved target', exp.matches[0]);
+            process.exit(1);
+          }
+          console.log('explain_text: ok (target=' + exp.matches[0].target + ')');
           EOF
           (cd "$GITHUB_WORKSPACE" && node ./wasm-smoke.cjs)
           rm -f "$GITHUB_WORKSPACE/wasm-smoke.cjs"
