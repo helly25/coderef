@@ -136,21 +136,41 @@ pub fn run_doctor_with_workspace(
     let refs = crate::scan::scan_workspace(root.as_ref(), &scannable)
         .map_err(|e| DoctorError::Scan(e.to_string()))?;
 
-    let mut used_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let total_refs = refs.len();
+    let files_with_matches: std::collections::HashSet<&str> =
+        refs.iter().map(|r| r.file.as_str()).collect();
+
+    let mut counts_by_pattern: std::collections::HashMap<&str, usize> =
+        std::collections::HashMap::new();
     for r in &refs {
-        used_ids.insert(r.pattern_id.clone());
+        *counts_by_pattern.entry(r.pattern_id.as_str()).or_insert(0) += 1;
     }
 
     let mut additions: Vec<Diagnostic> = Vec::new();
     for id in scannable.patterns.keys() {
-        if !used_ids.contains(id) {
+        if !counts_by_pattern.contains_key(id.as_str()) {
+            // Severity is `Info`, not `Warning`. A pattern that isn't
+            // used in this particular repo isn't a defect — shared and
+            // template configs (org-wide JIRA + LINEAR + GITHUB, etc.)
+            // routinely declare patterns that not every repo exercises.
+            // Strict users can escalate via per-pattern `scope.severity`
+            // overrides (DESIGN.md §5.4.3) once those wire through.
+            let message = format!(
+                "pattern `{id}` matched no references in this workspace \
+                 (workspace scanned: {total_refs} reference(s) across \
+                 {file_count} file(s) for the other patterns)",
+                file_count = files_with_matches.len(),
+            );
             additions.push(Diagnostic {
                 check: "pattern.unused".into(),
-                severity: Severity::Warning,
+                severity: Severity::Info,
                 pattern_id: Some(id.clone()),
-                message: format!("pattern `{id}` matched no references in this workspace"),
+                message,
                 hint: Some(
-                    "remove the pattern, or scope it to a specific subtree if it's intentional"
+                    "if this is a shared / template config, leave it. Otherwise \
+                     either remove the pattern, tighten `scope.include` to a \
+                     subtree where you expect matches, or escalate the severity \
+                     in your local config to make the check fail."
                         .into(),
                 ),
             });
