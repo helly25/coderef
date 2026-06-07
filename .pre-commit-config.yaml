@@ -41,3 +41,23 @@ repos:
         language: system
         types: [rust]
         pass_filenames: false
+
+      # Dogfood the project against its own .coderef.jsonc. `language: system`
+      # invokes the locally-built CLI directly; the public-facing
+      # .pre-commit-hooks.yaml will switch to `language: node` once the
+      # npm wrapper actually ships a binary (v0.2).
+      - id: coderef-doctor
+        name: coderef doctor (self)
+        description: Static integrity checks of this repo's own .coderef.jsonc.
+        entry: cargo run --quiet --release --bin coderef -- doctor --no-scan .
+        language: system
+        files: '^\.coderef\.jsonc$|^crates/coderef-(core|cli)/src/.*\.rs$'
+        pass_filenames: false
+
+      - id: coderef-check
+        name: coderef check (self)
+        description: Resolve every reference under this repo's own .coderef.jsonc.
+        entry: cargo run --quiet --release --bin coderef -- check .
+        language: system
+        files: '^\.coderef\.jsonc$|.*\.(rs|md|ts|js|py)$'
+        pass_filenames: false

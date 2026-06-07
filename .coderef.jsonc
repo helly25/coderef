@@ -1,0 +1,37 @@
+// coderef's own config — used to dogfood the engine against this repo.
+//
+// The patterns here are minimal-but-real:
+//
+//   - todo-user:  TODO(@user) in comments resolves to GitHub user pages.
+//                 Will fire on any TODO(@<github-username>) we ever add.
+//   - docref:     DOCREF(/path) in comments resolves to a workspace-
+//                 relative file. Used to keep markdown / config / doc
+//                 cross-references live as the repo moves around.
+//
+// Both patterns are `commentsOnly: true` so a TODO/DOCREF inside a
+// string literal isn't picked up.
+{
+  "$schema": "./schema/coderef.schema.json",
+  "ignore": [
+    "**/node_modules/**",
+    "**/target/**",
+    "**/out/**",
+    "**/pkg/**",
+    "**/*.lock"
+  ],
+  "patterns": {
+    "todo-user": {
+      "regex":  "TODO\\(@(?<user>[a-zA-Z][\\w.-]{0,38})\\)",
+      "target": "https://github.com/${user}",
+      "title":  "GitHub profile: ${user}",
+      "scope":  { "commentsOnly": true }
+    },
+    "docref": {
+      "regex":  "DOCREF\\((?<path>/?[^)\\s#]+)\\)",
+      "kind":   "local",
+      "target": "${path}",
+      "title":  "Document: ${path}",
+      "scope":  { "commentsOnly": true }
+    }
+  }
+}

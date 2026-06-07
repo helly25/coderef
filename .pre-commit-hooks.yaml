@@ -1,10 +1,19 @@
 # pre-commit framework integration. See DESIGN.md §16.1.
 #
-# v0.0.0 status: the hooks declared here will not function until v0.1 ships
-# a real `coderef` binary via the npm wrapper. Until then, including any of
-# these in a `.pre-commit-config.yaml` will fail at hook invocation with an
-# error from the placeholder bin (exit 127). Consumers should defer adding
-# these hooks until v0.1.
+# v0.1 status:
+#   - The engine (coderef-core), CLI (coderef), and editor (extension/)
+#     all work end-to-end.
+#   - The hooks below declare `language: node`, which assumes the
+#     `@helly25/coderef` npm wrapper resolves to a real binary. v0.1
+#     ships the binary via `cargo build --release`; the npm wrapper
+#     downloads it from GitHub Releases in v0.2 once we publish.
+#   - Until v0.2 lands, consumers who want to wire pre-commit hooks
+#     should use `language: system` against a locally-built binary
+#     (see this repo's own `.pre-commit-config.yaml` for an example
+#     of dogfooding `coderef check` + `coderef doctor` in CI).
+#   - The hooks below are the *target* shape we want consumers to
+#     install once v0.2 lands; entries (`coderef check`, `coderef
+#     doctor`) match the CLI surface already shipping.
 
 - id: coderef-check
   name: coderef — verify changed source references

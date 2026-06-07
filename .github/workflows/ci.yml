@@ -135,6 +135,16 @@ jobs:
           echo "$json" | python3 -c 'import json,sys; r=json.load(sys.stdin); assert r["errors"] >= 3, r'
           rm -rf "$tmp"
 
+      - name: Self-dogfood — coderef doctor + check against this repo
+        shell: bash
+        run: |
+          # The project's own .coderef.jsonc must pass static checks +
+          # every TODO(@user) / DOCREF(/path) reference it contains must
+          # resolve. This is what the .pre-commit-config.yaml's
+          # coderef-doctor / coderef-check hooks enforce locally.
+          ./target/release/coderef doctor --no-scan .
+          ./target/release/coderef check .
+
       - name: Regenerate JSON Schema from Rust types
         run: cargo run --bin coderef-gen-schema --locked
 
