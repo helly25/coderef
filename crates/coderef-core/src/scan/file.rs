@@ -3,7 +3,7 @@
 use indexmap::IndexMap;
 use thiserror::Error;
 
-use crate::comment::{detect_comment_ranges, is_in_any_range, Language, Range};
+use crate::comment::{detect_regions, is_in_comment_like, ClassifiedRange, Language};
 use crate::config::Pattern;
 use crate::pattern::{CompiledPattern, PatternError};
 use crate::reference::Reference;
@@ -15,10 +15,10 @@ pub struct ScanOptions<'a> {
     /// caller manages their lifetime.
     pub patterns: &'a [(CompiledPattern, Pattern)],
 
-    /// Language descriptor for comment-region detection. `None` means
-    /// no comment regions; matches against `scope.commentsOnly: true`
-    /// patterns will be filtered out (i.e. the pattern matches nothing
-    /// in unknown languages, which is the safe default).
+    /// Language descriptor for region classification. `None` means no
+    /// regions are detected; matches against `scope.commentsOnly: true`
+    /// patterns are filtered out (the pattern matches nothing in
+    /// unknown languages, which is the safe default).
     pub language: Option<&'a Language>,
 
     /// Variable resolution context. Captures will be inserted per-match
@@ -40,9 +40,9 @@ pub struct ScanOptions<'a> {
 /// surfaced as `ScanError::ResolveFailure` so the caller can map them
 /// to a diagnostic without losing the other references in the file.
 pub fn scan_file(content: &str, opts: &ScanOptions) -> Result<Vec<Reference>, ScanError> {
-    let comment_ranges: Vec<Range> = opts
+    let regions: Vec<ClassifiedRange> = opts
         .language
-        .map(|l| detect_comment_ranges(content, l))
+        .map(|l| detect_regions(content, l))
         .unwrap_or_default();
 
     let line_offsets = compute_line_offsets(content);
@@ -73,8 +73,15 @@ pub fn scan_file(content: &str, opts: &ScanOptions) -> Result<Vec<Reference>, Sc
                 match_end + 1
             };
 
-            // Filter by commentsOnly scope.
-            if comments_only && !is_in_any_range(&comment_ranges, match_start) {
+            // Filter by commentsOnly scope. v0.2 semantics: a match
+            // passes when it's inside any "comment-like" region —
+            // BlockComment, LineComment, CodeSnippet, or StringLiteral
+            // (per `RegionKind::is_comment_like`). The user-visible
+            // change vs v0.1 is that refs inside markdown code blocks
+            // and inside string literals now survive `commentsOnly:
+            // true`, matching the intent that those are documentation-
+            // like content where references still point at real things.
+            if comments_only && !is_in_comment_like(&regions, match_start) {
                 continue;
             }
 
@@ -125,7 +132,7 @@ pub fn scan_file(content: &str, opts: &ScanOptions) -> Result<Vec<Reference>, Sc
                 captures: caps_map,
                 target,
                 title,
-                in_comment: is_in_any_range(&comment_ranges, match_start),
+                in_comment: is_in_comment_like(&regions, match_start),
             });
         }
     }

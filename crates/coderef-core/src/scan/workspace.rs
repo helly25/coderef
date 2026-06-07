@@ -8,6 +8,7 @@
 
 use std::path::Path;
 
+use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use ignore::overrides::OverrideBuilder;
 use ignore::WalkBuilder;
 use thiserror::Error;
@@ -37,12 +38,20 @@ pub fn scan_workspace(
         ));
     }
 
-    // Compile every pattern, propagating the first failure.
-    let mut compiled: Vec<(CompiledPattern, Pattern)> = Vec::with_capacity(config.patterns.len());
+    // Compile every pattern, propagating the first failure. Each
+    // pattern carries optional include / exclude path globs in its
+    // scope; we precompile them as gitignore-style matchers so we can
+    // cheaply filter per file later.
+    let mut compiled: Vec<(CompiledPattern, Pattern, ScopeGlobs)> =
+        Vec::with_capacity(config.patterns.len());
     for (id, raw) in &config.patterns {
         let c = CompiledPattern::compile(id.clone(), raw)
             .map_err(WorkspaceScanError::PatternCompile)?;
-        compiled.push((c, raw.clone()));
+        let globs = ScopeGlobs::compile(root, raw).map_err(|e| WorkspaceScanError::IgnoreGlob {
+            pattern: format!("pattern `{id}` scope"),
+            message: e,
+        })?;
+        compiled.push((c, raw.clone(), globs));
     }
 
     // Build the walker. Apply config.ignore[] globs as overrides.
@@ -98,9 +107,24 @@ pub fn scan_workspace(
             .unwrap_or_default();
         let language = language_for_extension(ext);
 
+        // Filter patterns by their per-pattern scope.include / .exclude
+        // globs. A pattern with no include matches every file; one with
+        // include matches only files that hit at least one include glob.
+        // Excludes are applied on top: a file matching any exclude glob
+        // drops the pattern for that file.
+        let mut applicable: Vec<(CompiledPattern, Pattern)> = Vec::with_capacity(compiled.len());
+        for (cp, raw, globs) in &compiled {
+            if globs.applies_to(Path::new(&rel_path)) {
+                applicable.push((cp.clone(), raw.clone()));
+            }
+        }
+        if applicable.is_empty() {
+            continue;
+        }
+
         let ctx = build_base_context(config);
         let opts = ScanOptions {
-            patterns: &compiled,
+            patterns: &applicable,
             language,
             base_context: &ctx,
             file: &rel_path,
@@ -148,6 +172,58 @@ pub enum WorkspaceScanError {
 
     #[error(transparent)]
     Scan(ScanError),
+}
+
+/// Precompiled per-pattern path filter built from `scope.include` and
+/// `scope.exclude`. Both use gitignore-style globs (matching the
+/// workspace-level `ignore` syntax).
+struct ScopeGlobs {
+    include: Option<Gitignore>,
+    exclude: Option<Gitignore>,
+}
+
+impl ScopeGlobs {
+    fn compile(root: &Path, raw: &Pattern) -> Result<Self, String> {
+        let scope = raw.scope.as_ref();
+        let include = match scope.map(|s| &s.include).filter(|v| !v.is_empty()) {
+            None => None,
+            Some(globs) => Some(build_globset(root, globs)?),
+        };
+        let exclude = match scope.map(|s| &s.exclude).filter(|v| !v.is_empty()) {
+            None => None,
+            Some(globs) => Some(build_globset(root, globs)?),
+        };
+        Ok(Self { include, exclude })
+    }
+
+    /// True iff the pattern applies to `rel_path` (workspace-relative).
+    fn applies_to(&self, rel_path: &Path) -> bool {
+        if let Some(inc) = &self.include {
+            if inc.matched(rel_path, false).is_ignore() {
+                // matched at least one include glob
+            } else {
+                return false;
+            }
+        }
+        if let Some(exc) = &self.exclude {
+            if exc.matched(rel_path, false).is_ignore() {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+fn build_globset(root: &Path, globs: &[String]) -> Result<Gitignore, String> {
+    let mut builder = GitignoreBuilder::new(root);
+    for g in globs {
+        builder
+            .add_line(None, g)
+            .map_err(|e| format!("invalid glob `{g}`: {e}"))?;
+    }
+    builder
+        .build()
+        .map_err(|e| format!("failed to build globset: {e}"))
 }
 
 #[cfg(test)]

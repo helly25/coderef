@@ -13,7 +13,7 @@ use crate::variables::{Context, VariableError};
 
 /// Pattern in its runtime form: the regex is compiled and the target
 /// template is parsed and ready for substitution.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct CompiledPattern {
     /// The pattern's config id (e.g. `"todo-user"`).
     pub id: String,

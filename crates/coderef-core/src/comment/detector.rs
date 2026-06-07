@@ -1,11 +1,14 @@
-//! Byte-range scanner that identifies comment regions in a source
+//! Byte-range scanner that classifies non-body regions of a source
 //! buffer for a given `Language`.
 //!
 //! Algorithm: a single forward pass with three states (`Code`,
 //! `String`, `BlockComment`), recognising line comments at the top
-//! level only.
+//! level only. Each detected region is tagged with a `RegionKind`
+//! (`BlockComment` / `LineComment` / `StringLiteral`) — markdown adds
+//! `CodeSnippet` through its dedicated parser.
 
 use super::languages::Language;
+use super::region::{ClassifiedRange, RegionKind};
 
 /// `[start, end)` byte range inside a buffer.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -31,21 +34,21 @@ pub fn is_in_any_range(ranges: &[Range], pos: usize) -> bool {
     ranges.iter().any(|r| r.contains(pos))
 }
 
-/// Scan `content` for comment regions under `lang`'s syntax. Returns a
-/// list of disjoint, sorted ranges.
+/// Scan `content` for classified non-body regions under `lang`'s
+/// syntax. Returns a list of disjoint, sorted ranges, each tagged
+/// with a `RegionKind`.
 ///
 /// Markdown is special-cased to the dedicated `super::markdown` parser
-/// because correctly identifying `<!-- -->` comments in markdown
-/// requires skipping fenced code blocks and inline code spans — the
-/// generic block-comment / line-comment / string state machine here
-/// can't represent those.
+/// because correctly identifying `<!-- -->` comments + fenced /
+/// inline code in markdown requires backtick / tilde awareness that
+/// the generic state machine can't represent.
 #[must_use]
-pub fn detect_comment_ranges(content: &str, lang: &Language) -> Vec<Range> {
+pub fn detect_regions(content: &str, lang: &Language) -> Vec<ClassifiedRange> {
     if lang.name == "markdown" {
-        return super::markdown::detect_markdown_comment_ranges(content);
+        return super::markdown::detect_markdown_regions(content);
     }
     let bytes = content.as_bytes();
-    let mut ranges = Vec::new();
+    let mut regions: Vec<ClassifiedRange> = Vec::new();
     let mut i = 0;
     while i < bytes.len() {
         // 1) Block comment? Matched FIRST so a longer block-comment
@@ -61,7 +64,10 @@ pub fn detect_comment_ranges(content: &str, lang: &Language) -> Vec<Range> {
             } else {
                 body_end + close.len()
             };
-            ranges.push(Range { start, end });
+            regions.push(ClassifiedRange {
+                range: Range { start, end },
+                kind: RegionKind::BlockComment,
+            });
             i = end;
             continue;
         }
@@ -70,23 +76,34 @@ pub fn detect_comment_ranges(content: &str, lang: &Language) -> Vec<Range> {
         if let Some((_lc, lc_len)) = match_at(bytes, i, lang.line_comments) {
             let start = i;
             let end = find_byte_or_end(bytes, b'\n', i + lc_len);
-            ranges.push(Range { start, end });
+            regions.push(ClassifiedRange {
+                range: Range { start, end },
+                kind: RegionKind::LineComment,
+            });
             i = end;
             continue;
         }
 
-        // 3) String literal? Skip past it without recording.
+        // 3) String literal? v0.2: classify, don't silently consume.
+        // A reference inside a string (especially in test fixtures) is
+        // still semantically a reference — see DESIGN.md §5.4.1 v0.2
+        // notes on classified regions.
         if let Some((delim, delim_len)) = match_at(bytes, i, lang.string_delimiters) {
+            let start = i;
             let close_search_start = i + delim_len;
-            let close = find_string_close(bytes, delim.as_bytes(), close_search_start);
-            i = close;
+            let end = find_string_close(bytes, delim.as_bytes(), close_search_start);
+            regions.push(ClassifiedRange {
+                range: Range { start, end },
+                kind: RegionKind::StringLiteral,
+            });
+            i = end;
             continue;
         }
 
         // 4) Plain code byte; advance.
         i += utf8_char_len(bytes[i]);
     }
-    ranges
+    regions
 }
 
 /// Returns `Some((matched_token, len))` if any of `tokens` is a prefix
@@ -174,74 +191,89 @@ mod tests {
     use super::*;
     use crate::comment::languages::language_for_extension;
 
-    fn ranges_for(ext: &str, content: &str) -> Vec<Range> {
-        detect_comment_ranges(content, language_for_extension(ext).unwrap())
+    fn regions_for(ext: &str, content: &str) -> Vec<ClassifiedRange> {
+        detect_regions(content, language_for_extension(ext).unwrap())
     }
 
-    fn slices_of<'a>(ranges: &[Range], content: &'a str) -> Vec<&'a str> {
-        ranges.iter().map(|r| &content[r.start..r.end]).collect()
+    fn slices_of<'a>(regions: &[ClassifiedRange], content: &'a str) -> Vec<&'a str> {
+        regions
+            .iter()
+            .map(|r| &content[r.range.start..r.range.end])
+            .collect()
+    }
+
+    fn kinds_of(regions: &[ClassifiedRange]) -> Vec<RegionKind> {
+        regions.iter().map(|r| r.kind).collect()
     }
 
     // ---------- Rust / C-family ----------
 
     #[test]
-    fn test_detect_rust_line_comment_to_end_of_line() {
+    fn test_detect_rust_line_comment_classified_as_line_comment() {
         let content = "let x = 1; // tail comment\nlet y = 2;";
-        let r = ranges_for("rs", content);
-        assert_eq!(r.len(), 1);
+        let r = regions_for("rs", content);
         assert_eq!(slices_of(&r, content), vec!["// tail comment"]);
+        assert_eq!(kinds_of(&r), vec![RegionKind::LineComment]);
     }
 
     #[test]
     fn test_detect_rust_line_comment_at_eof_has_no_trailing_newline() {
         let content = "let x = 1; // no trailing newline";
-        let r = ranges_for("rs", content);
+        let r = regions_for("rs", content);
         assert_eq!(slices_of(&r, content), vec!["// no trailing newline"]);
     }
 
     #[test]
-    fn test_detect_rust_block_comment_single_line() {
+    fn test_detect_rust_block_comment_classified_as_block_comment() {
         let content = "fn x() /* block */ {}";
-        let r = ranges_for("rs", content);
+        let r = regions_for("rs", content);
         assert_eq!(slices_of(&r, content), vec!["/* block */"]);
+        assert_eq!(kinds_of(&r), vec![RegionKind::BlockComment]);
     }
 
     #[test]
     fn test_detect_rust_block_comment_multi_line() {
         let content = "/* line 1\nline 2\nline 3 */ fn x() {}";
-        let r = ranges_for("rs", content);
+        let r = regions_for("rs", content);
         assert_eq!(slices_of(&r, content), vec!["/* line 1\nline 2\nline 3 */"]);
     }
 
     #[test]
-    fn test_detect_rust_string_literal_not_a_comment() {
+    fn test_detect_rust_string_literal_classified_as_string_literal() {
+        // v0.2 change: strings emit a StringLiteral region (in v0.1
+        // they were silently consumed). The `//` literal inside the
+        // string still doesn't open a LineComment, but the string
+        // itself is now a region.
         let content = "let s = \"// not a comment\";";
-        let r = ranges_for("rs", content);
-        assert!(r.is_empty());
+        let r = regions_for("rs", content);
+        assert_eq!(slices_of(&r, content), vec!["\"// not a comment\""]);
+        assert_eq!(kinds_of(&r), vec![RegionKind::StringLiteral]);
     }
 
     #[test]
-    fn test_detect_rust_block_inside_string_not_a_comment() {
+    fn test_detect_rust_block_inside_string_classified_as_string_only() {
         let content = "let s = \"/* not a comment */\";";
-        let r = ranges_for("rs", content);
-        assert!(r.is_empty());
+        let r = regions_for("rs", content);
+        assert_eq!(slices_of(&r, content), vec!["\"/* not a comment */\""]);
+        assert_eq!(kinds_of(&r), vec![RegionKind::StringLiteral]);
     }
 
     #[test]
     fn test_detect_rust_unterminated_block_extends_to_eof() {
         let content = "code; /* unterminated";
-        let r = ranges_for("rs", content);
+        let r = regions_for("rs", content);
         assert_eq!(slices_of(&r, content), vec!["/* unterminated"]);
     }
 
     #[test]
-    fn test_detect_rust_backslash_escape_inside_string() {
-        // \" is an escaped quote; the string isn't terminated until the
-        // unescaped ". The // inside is still inside a string, not a
-        // comment.
+    fn test_detect_rust_string_then_real_comment_classifies_each_correctly() {
         let content = "let s = \"a\\\"b // c\"; let t = 1; // real comment";
-        let r = ranges_for("rs", content);
-        assert_eq!(slices_of(&r, content), vec!["// real comment"]);
+        let r = regions_for("rs", content);
+        assert_eq!(
+            kinds_of(&r),
+            vec![RegionKind::StringLiteral, RegionKind::LineComment]
+        );
+        assert_eq!(slices_of(&r, content)[1], "// real comment");
     }
 
     // ---------- Python ----------
@@ -249,22 +281,32 @@ mod tests {
     #[test]
     fn test_detect_python_hash_line_comment() {
         let content = "x = 1  # tail\ny = 2";
-        let r = ranges_for("py", content);
+        let r = regions_for("py", content);
         assert_eq!(slices_of(&r, content), vec!["# tail"]);
+        assert_eq!(kinds_of(&r), vec![RegionKind::LineComment]);
     }
 
     #[test]
-    fn test_detect_python_hash_inside_string_not_a_comment() {
+    fn test_detect_python_hash_inside_string_classifies_string_separately() {
         let content = "s = \"# not a comment\"\n# real comment";
-        let r = ranges_for("py", content);
-        assert_eq!(slices_of(&r, content), vec!["# real comment"]);
+        let r = regions_for("py", content);
+        assert_eq!(
+            kinds_of(&r),
+            vec![RegionKind::StringLiteral, RegionKind::LineComment]
+        );
     }
 
     #[test]
-    fn test_detect_python_triple_quoted_string_swallows_hashes_inside() {
+    fn test_detect_python_triple_quoted_string_is_a_single_string_literal() {
         let content = "x = \"\"\"docstring\n# not a comment\n\"\"\"\n# real comment";
-        let r = ranges_for("py", content);
-        assert_eq!(slices_of(&r, content), vec!["# real comment"]);
+        let r = regions_for("py", content);
+        // One StringLiteral (the triple-quoted block) followed by one
+        // LineComment (`# real comment`).
+        assert_eq!(
+            kinds_of(&r),
+            vec![RegionKind::StringLiteral, RegionKind::LineComment]
+        );
+        assert!(slices_of(&r, content)[0].starts_with("\"\"\""));
     }
 
     // ---------- Lua ----------
@@ -272,15 +314,17 @@ mod tests {
     #[test]
     fn test_detect_lua_dash_line_comment() {
         let content = "local x = 1 -- tail\n";
-        let r = ranges_for("lua", content);
+        let r = regions_for("lua", content);
         assert_eq!(slices_of(&r, content), vec!["-- tail"]);
+        assert_eq!(kinds_of(&r), vec![RegionKind::LineComment]);
     }
 
     #[test]
     fn test_detect_lua_block_comment() {
         let content = "x = 1 --[[ block\nspans ]] y = 2";
-        let r = ranges_for("lua", content);
+        let r = regions_for("lua", content);
         assert_eq!(slices_of(&r, content), vec!["--[[ block\nspans ]]"]);
+        assert_eq!(kinds_of(&r), vec![RegionKind::BlockComment]);
     }
 
     // ---------- Markdown ----------
@@ -293,21 +337,24 @@ mod tests {
     #[test]
     fn test_detect_markdown_dispatches_to_fenced_block_aware_parser() {
         let content = "# Title\n<!-- hidden -->\nbody";
-        let r = ranges_for("md", content);
+        let r = regions_for("md", content);
         assert_eq!(slices_of(&r, content), vec!["<!-- hidden -->"]);
+        assert_eq!(kinds_of(&r), vec![RegionKind::BlockComment]);
     }
 
     #[test]
-    fn test_detect_markdown_html_comment_in_inline_code_is_protected() {
-        // The PR #7 regression case: backtick-wrapped <!-- literal must
-        // not open a comment range. v0.1 returned an empty set
-        // unconditionally for .md; v0.2 distinguishes properly.
-        let content = "Doc says `<!--` is the opener.\n\nLater: `-->` closes.";
-        let r = ranges_for("md", content);
-        assert!(r.is_empty(), "got: {:?}", slices_of(&r, content));
+    fn test_detect_markdown_inline_code_classified_as_code_snippet() {
+        // v0.2 change: backtick-wrapped content emits a CodeSnippet
+        // region (in v0.1 it was protected and silently dropped).
+        // References inside it survive `commentsOnly: true` via the
+        // new is_comment_like predicate.
+        let content = "See `JIRA(PROJ-1)` for the canonical example.";
+        let r = regions_for("md", content);
+        assert_eq!(kinds_of(&r), vec![RegionKind::CodeSnippet]);
+        assert!(slices_of(&r, content)[0].contains("JIRA"));
     }
 
-    // ---------- Range utilities ----------
+    // ---------- Range utilities (unchanged) ----------
 
     #[test]
     fn test_range_contains_inclusive_start_exclusive_end() {
@@ -338,17 +385,28 @@ mod tests {
     // ---------- UTF-8 ----------
 
     #[test]
-    fn test_detect_handles_multibyte_utf8_in_string_literal() {
+    fn test_detect_handles_multibyte_utf8_string_alongside_line_comment() {
         let content = "let s = \"Müller\"; // tail";
-        let r = ranges_for("rs", content);
-        assert_eq!(slices_of(&r, content), vec!["// tail"]);
+        let r = regions_for("rs", content);
+        assert_eq!(
+            kinds_of(&r),
+            vec![RegionKind::StringLiteral, RegionKind::LineComment]
+        );
+        assert_eq!(slices_of(&r, content)[1], "// tail");
     }
 
     #[test]
-    fn test_detect_multiple_comments_in_one_file() {
+    fn test_detect_multiple_comments_classified_correctly() {
         let content = "a // c1\nb /* c2 */ c\nd // c3";
-        let r = ranges_for("rs", content);
-        let slices = slices_of(&r, content);
-        assert_eq!(slices, vec!["// c1", "/* c2 */", "// c3"]);
+        let r = regions_for("rs", content);
+        assert_eq!(slices_of(&r, content), vec!["// c1", "/* c2 */", "// c3"]);
+        assert_eq!(
+            kinds_of(&r),
+            vec![
+                RegionKind::LineComment,
+                RegionKind::BlockComment,
+                RegionKind::LineComment
+            ]
+        );
     }
 }
