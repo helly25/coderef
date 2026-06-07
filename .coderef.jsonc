@@ -23,6 +23,7 @@
   ],
   "patterns": {
     "todo-user": {
+      "description": "GitHub @user mention inside a TODO marker. Links the user to their GitHub profile so reviewers can resolve who owns a TODO without leaving the editor.",
       "regex":  "TODO\\(@(?<user>[a-zA-Z][\\w.-]{0,38})\\)",
       "target": "https://github.com/${user}",
       "title":  "GitHub profile: ${user}",
@@ -35,6 +36,7 @@
       }
     },
     "docref": {
+      "description": "Workspace-relative document reference. Resolves DOCREF(/path) or DOCREF(path) to a file under the workspace root (§6.1 default 'workspace' anchor mode). Use it to keep cross-references in code + docs live as the repo moves around.",
       "regex":  "DOCREF\\((?<path>/?[^)\\s#]+)\\)",
       "kind":   "local",
       "target": "${path}",

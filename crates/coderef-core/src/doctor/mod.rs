@@ -147,7 +147,7 @@ pub fn run_doctor_with_workspace(
     }
 
     let mut additions: Vec<Diagnostic> = Vec::new();
-    for id in scannable.patterns.keys() {
+    for (id, pattern) in &scannable.patterns {
         if !counts_by_pattern.contains_key(id.as_str()) {
             // Severity is `Info`, not `Warning`. A pattern that isn't
             // used in this particular repo isn't a defect — shared and
@@ -155,10 +155,18 @@ pub fn run_doctor_with_workspace(
             // routinely declare patterns that not every repo exercises.
             // Strict users can escalate via per-pattern `scope.severity`
             // overrides (DESIGN.md §5.4.3) once those wire through.
+            // Multi-line message/hint: lines after the first are rendered
+            // with a renderer-added indent (no leading whitespace in the
+            // source). Doctor's text formatter handles alignment.
+            let description_clause = pattern
+                .description
+                .as_deref()
+                .map(|d| format!("\npattern description: {d}"))
+                .unwrap_or_default();
             let message = format!(
-                "pattern `{id}` matched no references in this workspace \
-                 (workspace scanned: {total_refs} reference(s) across \
-                 {file_count} file(s) for the other patterns)",
+                "pattern `{id}` matched no references in this workspace.\n\
+                 workspace scan: {total_refs} reference(s) across {file_count} \
+                 file(s) for the other patterns.{description_clause}",
                 file_count = files_with_matches.len(),
             );
             additions.push(Diagnostic {
@@ -167,10 +175,11 @@ pub fn run_doctor_with_workspace(
                 pattern_id: Some(id.clone()),
                 message,
                 hint: Some(
-                    "if this is a shared / template config, leave it. Otherwise \
-                     either remove the pattern, tighten `scope.include` to a \
-                     subtree where you expect matches, or escalate the severity \
-                     in your local config to make the check fail."
+                    "if this is a shared / template config, leave it.\n\
+                     otherwise:\n\
+                       - remove the pattern,\n\
+                       - tighten `scope.include` to a subtree where you expect matches, or\n\
+                       - escalate the severity in your local config to make the check fail."
                         .into(),
                 ),
             });
