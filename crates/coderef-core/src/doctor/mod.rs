@@ -154,7 +154,8 @@ pub fn run_doctor_with_workspace(
             // that's not a defect). Per-pattern `severity` override
             // lets a strict user escalate to Warning / Error or
             // disable entirely with Off.
-            let sev = self::checks::resolve_severity(pattern, "pattern.unused", Severity::Info);
+            let sev =
+                self::checks::resolve_severity(config, pattern, "pattern.unused", Severity::Info);
             if sev == Severity::Off {
                 continue;
             }

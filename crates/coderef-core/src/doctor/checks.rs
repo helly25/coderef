@@ -9,19 +9,37 @@ use crate::config::{Config, Pattern};
 use crate::severity::Severity;
 use crate::variables::{parse_segments, Segment};
 
-/// Look up the effective severity for `check_id` on `p`. Returns the
-/// per-pattern override from `Pattern.severity` if set; otherwise the
-/// default supplied by the check site.
-pub(super) fn resolve_severity(p: &Pattern, check_id: &str, default: Severity) -> Severity {
-    p.severity.get(check_id).copied().unwrap_or(default)
+/// Look up the effective severity for `check_id`. Resolution order:
+///
+/// 1. `Pattern.severity[check_id]` — per-pattern override (most
+///    specific).
+/// 2. `Config.severity[check_id]` — workspace-level override.
+/// 3. `default` — the check's hardcoded fallback.
+///
+/// A `Severity::Off` at either override layer suppresses emission.
+pub(super) fn resolve_severity(
+    cfg: &Config,
+    p: &Pattern,
+    check_id: &str,
+    default: Severity,
+) -> Severity {
+    if let Some(s) = p.severity.get(check_id).copied() {
+        return s;
+    }
+    if let Some(s) = cfg.severity.get(check_id).copied() {
+        return s;
+    }
+    default
 }
 
-/// Push a diagnostic, respecting the per-pattern `severity` override.
-/// A pattern that maps `check_id` → `Severity::Off` causes the check
-/// to skip emission entirely; everything else uses the resolved
-/// severity (override or default).
+/// Push a diagnostic, respecting the per-pattern + workspace
+/// `severity` overrides. A check resolved to `Severity::Off` skips
+/// emission entirely; everything else uses the resolved severity.
+#[allow(clippy::too_many_arguments)] // each arg is a distinct, small value; bundling them
+                                     // behind a struct would add boilerplate without clarity.
 fn push_diag(
     out: &mut Vec<Diagnostic>,
+    cfg: &Config,
     p: &Pattern,
     pattern_id: &str,
     check_id: &'static str,
@@ -29,7 +47,7 @@ fn push_diag(
     message: String,
     hint: Option<String>,
 ) {
-    let sev = resolve_severity(p, check_id, default_severity);
+    let sev = resolve_severity(cfg, p, check_id, default_severity);
     if sev == Severity::Off {
         return;
     }
@@ -52,6 +70,7 @@ pub fn check_pattern(id: &str, p: &Pattern, cfg: &Config, out: &mut Vec<Diagnost
         (false, false) => {
             push_diag(
                 out,
+                cfg,
                 p,
                 id,
                 "pattern.targetMissing",
@@ -63,6 +82,7 @@ pub fn check_pattern(id: &str, p: &Pattern, cfg: &Config, out: &mut Vec<Diagnost
         (true, true) => {
             push_diag(
                 out,
+                cfg,
                 p,
                 id,
                 "pattern.targetsBothFieldsSet",
@@ -80,6 +100,7 @@ pub fn check_pattern(id: &str, p: &Pattern, cfg: &Config, out: &mut Vec<Diagnost
         Err(e) => {
             push_diag(
                 out,
+                cfg,
                 p,
                 id,
                 "pattern.regexInvalid",
@@ -121,6 +142,7 @@ pub fn check_pattern(id: &str, p: &Pattern, cfg: &Config, out: &mut Vec<Diagnost
             Err(e) => {
                 push_diag(
                     out,
+                    cfg,
                     p,
                     id,
                     "variable.invalidSyntax",
@@ -149,6 +171,7 @@ pub fn check_pattern(id: &str, p: &Pattern, cfg: &Config, out: &mut Vec<Diagnost
                     } else {
                         push_diag(
                             out,
+                            cfg,
                             p,
                             id,
                             "pattern.captureUnknown",
@@ -169,6 +192,7 @@ pub fn check_pattern(id: &str, p: &Pattern, cfg: &Config, out: &mut Vec<Diagnost
                     if !cfg.variables.contains_key(&name) {
                         push_diag(
                             out,
+                            cfg,
                             p,
                             id,
                             "pattern.variableConfigUnknown",
@@ -188,6 +212,7 @@ pub fn check_pattern(id: &str, p: &Pattern, cfg: &Config, out: &mut Vec<Diagnost
                     let expected_version = if ns == "blame" { "v0.3" } else { "v0.2" };
                     push_diag(
                         out,
+                        cfg,
                         p,
                         id,
                         "pattern.variableNamespaceFuture",
@@ -215,6 +240,7 @@ pub fn check_pattern(id: &str, p: &Pattern, cfg: &Config, out: &mut Vec<Diagnost
         if !referenced_captures.contains(cap) {
             push_diag(
                 out,
+                cfg,
                 p,
                 id,
                 "pattern.captureUnused",
