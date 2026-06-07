@@ -53,7 +53,10 @@
           "README.md",
           "docs/**",
           "crates/coderef-core/src/comment/markdown.rs",
-          "crates/coderef-core/tests/check_pipeline.rs"
+          "crates/coderef-core/tests/check_pipeline.rs",
+          // commands.ts has DOCREF(/docs/x.md) as an InputBox prompt
+          // example — illustrative, not a real ref.
+          "extension/src/commands.ts"
         ]
       }
     }
