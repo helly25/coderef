@@ -268,29 +268,80 @@ jobs:
 
   # ---------------------------------------------------------------------------
   extension:
-    name: VSCode extension (TS)
+    name: VSCode extension (TS + VSIX)
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: extension
     steps:
       - uses: actions/checkout@v4
+
+      # Rust toolchain + wasm-pack are needed for `npm run build` /
+      # `vsce package`, which run scripts/bundle-wasm.cjs to produce the
+      # in-VSIX WASM artefacts (extension/out/wasm/*).
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install
+          rustup target add wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: extension-${{ hashFiles('Cargo.lock') }}
+
+      - name: Install wasm-pack
+        run: curl -fsSL https://rustwasm.github.io/wasm-pack/installer/init.sh | sh
 
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
 
-      - name: Install dependencies
+      - name: Install dependencies (extension)
+        working-directory: extension
         run: npm install --no-audit --no-fund
 
       - name: tsc --noEmit
+        working-directory: extension
         run: npx tsc --noEmit -p ./
 
       - name: eslint
+        working-directory: extension
         run: npx eslint src || true   # v0.0.0 has no eslint config yet
 
       - name: Unit tests (node --test, pure-function paths)
+        working-directory: extension
         run: npm test
+
+      - name: Build (compile + bundle-wasm) and package VSIX
+        working-directory: extension
+        run: npm run package
+
+      - name: Verify VSIX contains the bundled wasm-pack output
+        working-directory: extension
+        shell: bash
+        run: |
+          # The bundle-wasm script must have copied the wasm-pack output
+          # into out/wasm/ before vsce zipped the package; the VSIX is
+          # just a zip so we can inspect it.
+          vsix=$(ls *.vsix | head -1)
+          echo "inspecting $vsix"
+          unzip -l "$vsix" | tee /tmp/vsix-contents.txt
+          for need in \
+            "extension/out/extension.js" \
+            "extension/out/wasm/coderef_core_wasm.js" \
+            "extension/out/wasm/coderef_core_wasm_bg.wasm"; do
+            grep -q "$need" /tmp/vsix-contents.txt || {
+              echo "VSIX is missing $need"
+              exit 1
+            }
+          done
+          # Source TS, scripts, and tests must NOT ship.
+          for forbid in \
+            "extension/src/" \
+            "extension/scripts/" \
+            "extension/out/test/" \
+            "wasmEngine.ts"; do
+            if grep -q "$forbid" /tmp/vsix-contents.txt; then
+              echo "VSIX contains $forbid but shouldn't"
+              exit 1
+            fi
+          done
 
   # ---------------------------------------------------------------------------
   npm-wrapper:
