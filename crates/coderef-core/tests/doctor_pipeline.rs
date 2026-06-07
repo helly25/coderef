@@ -19,7 +19,8 @@ fn tmpdir(label: &str) -> PathBuf {
 }
 
 #[test]
-fn doctor_flags_pattern_unused_in_an_empty_workspace() {
+fn doctor_flags_pattern_unused_in_an_empty_workspace_as_info_not_warning() {
+    use coderef_core::severity::Severity;
     let root = tmpdir("unused");
     let cfg = Config::from_jsonc_str(
         r#"{ "patterns": { "todo": {
@@ -29,11 +30,25 @@ fn doctor_flags_pattern_unused_in_an_empty_workspace() {
     )
     .unwrap();
     let report = run_doctor_with_workspace(&root, &cfg).unwrap();
-    let found = report
+    let diag = report
         .diagnostics
         .iter()
-        .any(|d| d.check == "pattern.unused" && d.pattern_id.as_deref() == Some("todo"));
-    assert!(found, "got: {:#?}", report.diagnostics);
+        .find(|d| d.check == "pattern.unused" && d.pattern_id.as_deref() == Some("todo"))
+        .expect("pattern.unused expected");
+    // v0.2 change: pattern.unused is Info, not Warning, so shared/
+    // template configs that declare patterns for repos that don't
+    // use every one don't get noisy warnings by default. The hint
+    // explains the escalation path.
+    assert_eq!(diag.severity, Severity::Info, "diag: {diag:#?}");
+    assert!(
+        diag.message.contains("scanned"),
+        "message lacks scan context: {}",
+        diag.message
+    );
+    assert!(
+        report.passed(),
+        "Info-severity unused shouldn't fail passed()"
+    );
     fs::remove_dir_all(&root).unwrap();
 }
 
