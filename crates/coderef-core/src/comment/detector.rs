@@ -33,8 +33,17 @@ pub fn is_in_any_range(ranges: &[Range], pos: usize) -> bool {
 
 /// Scan `content` for comment regions under `lang`'s syntax. Returns a
 /// list of disjoint, sorted ranges.
+///
+/// Markdown is special-cased to the dedicated `super::markdown` parser
+/// because correctly identifying `<!-- -->` comments in markdown
+/// requires skipping fenced code blocks and inline code spans — the
+/// generic block-comment / line-comment / string state machine here
+/// can't represent those.
 #[must_use]
 pub fn detect_comment_ranges(content: &str, lang: &Language) -> Vec<Range> {
+    if lang.name == "markdown" {
+        return super::markdown::detect_markdown_comment_ranges(content);
+    }
     let bytes = content.as_bytes();
     let mut ranges = Vec::new();
     let mut i = 0;
@@ -275,25 +284,24 @@ mod tests {
     }
 
     // ---------- Markdown ----------
+    //
+    // The full markdown parser lives in super::markdown. The two
+    // tests here just verify the detector's dispatch to that parser
+    // is wired up — comprehensive coverage of fenced blocks + inline
+    // code + comment cases is in markdown.rs's own tests.
 
     #[test]
-    fn test_detect_markdown_yields_no_comment_ranges_in_v0_1() {
-        // v0.1 markdown has no comment delimiters (see comment/languages.rs
-        // MARKDOWN). The detector must not flag <!-- --> ranges; otherwise
-        // a literal <!-- inside a fenced code block in DESIGN.md / any
-        // README opens a spurious comment range that swallows the rest
-        // of the doc until the next -->.
+    fn test_detect_markdown_dispatches_to_fenced_block_aware_parser() {
         let content = "# Title\n<!-- hidden -->\nbody";
         let r = ranges_for("md", content);
-        assert!(r.is_empty(), "got: {:?}", slices_of(&r, content));
+        assert_eq!(slices_of(&r, content), vec!["<!-- hidden -->"]);
     }
 
     #[test]
-    fn test_detect_markdown_with_backticked_html_comment_does_not_open_range() {
-        // The regression case: literal <!-- inside a code-fence literal,
-        // followed much later by another --> elsewhere. v0.1's empty
-        // markdown comment-set means neither of these is treated as a
-        // comment opener / closer, which is the safe v0.1 default.
+    fn test_detect_markdown_html_comment_in_inline_code_is_protected() {
+        // The PR #7 regression case: backtick-wrapped <!-- literal must
+        // not open a comment range. v0.1 returned an empty set
+        // unconditionally for .md; v0.2 distinguishes properly.
         let content = "Doc says `<!--` is the opener.\n\nLater: `-->` closes.";
         let r = ranges_for("md", content);
         assert!(r.is_empty(), "got: {:?}", slices_of(&r, content));
