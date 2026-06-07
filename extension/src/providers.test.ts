@@ -96,3 +96,53 @@ test("linkTargetFor local kind without workspace folder falls back to file dir",
   );
   assert.ok(uri.toString().endsWith("/lone/buddy.md"), `got: ${uri.toString()}`);
 });
+
+test("buildHoverMarkdown includes pattern id, kind, title, and target", () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const vscode = require("vscode");
+  const target = vscode.Uri.parse("https://example.com/a");
+  const md = providers.buildHoverMarkdown(
+    r({ pattern_id: "todo-user", pattern_kind: "url", title: "User: alice", target: "https://example.com/a" }),
+    undefined,
+    target,
+  );
+  const value: string = (md as { value: string }).value;
+  assert.match(value, /`todo-user`/);
+  assert.match(value, /\(url\)/);
+  assert.match(value, /User: alice/);
+  assert.match(value, /example\.com/);
+});
+
+test("buildHoverMarkdown renders description above title when provided", () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const vscode = require("vscode");
+  const target = vscode.Uri.parse("https://example.com/a");
+  const md = providers.buildHoverMarkdown(
+    r({ pattern_id: "todo-user", title: "User: alice" }),
+    "GitHub @user mention inside a TODO marker.",
+    target,
+  );
+  const value: string = (md as { value: string }).value;
+  // Description text should appear before the title text in the
+  // rendered markdown.
+  const descIdx = value.indexOf("GitHub @user mention");
+  const titleIdx = value.indexOf("User: alice");
+  assert.ok(descIdx >= 0, `description missing: ${value}`);
+  assert.ok(titleIdx >= 0, `title missing: ${value}`);
+  assert.ok(descIdx < titleIdx, `description should precede title: ${value}`);
+});
+
+test("buildHoverMarkdown omits description and title when neither is set", () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const vscode = require("vscode");
+  const target = vscode.Uri.parse("https://example.com/a");
+  const md = providers.buildHoverMarkdown(
+    r({ pattern_id: "x", title: null }),
+    undefined,
+    target,
+  );
+  const value: string = (md as { value: string }).value;
+  // Only the header + target line should be there.
+  assert.match(value, /`x`/);
+  assert.match(value, /→/);
+});
