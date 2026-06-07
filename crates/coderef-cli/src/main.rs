@@ -44,6 +44,7 @@ fn main() -> ExitCode {
         Some("check") => cmd_check(args.collect()),
         Some("doctor") => cmd_doctor(args.collect()),
         Some("patterns") => cmd_patterns(args.collect()),
+        Some("explain") => cmd_explain(args.collect()),
         Some("help") => cmd_help(args.collect()),
         Some(other) => {
             eprintln!("coderef: unknown subcommand `{other}`");
@@ -537,6 +538,10 @@ fn cmd_help(args: Vec<String>) -> ExitCode {
             print!("{}", help::PATTERNS_HELP);
             ExitCode::SUCCESS
         }
+        Some("explain") => {
+            print!("{}", help::EXPLAIN_HELP);
+            ExitCode::SUCCESS
+        }
         Some(other) => {
             eprintln!("coderef help: unknown subcommand `{other}`");
             eprintln!();
@@ -641,6 +646,147 @@ fn cmd_patterns(args: Vec<String>) -> ExitCode {
             print_pattern_detail(&name, pat);
             ExitCode::SUCCESS
         }
+    }
+}
+
+/// `coderef explain [--config <path>] [--report text|json] <input>`
+fn cmd_explain(args: Vec<String>) -> ExitCode {
+    let mut config_path: Option<String> = None;
+    let mut report = Report::Text;
+    let mut input: Option<String> = None;
+
+    let mut it = args.into_iter();
+    while let Some(arg) = it.next() {
+        match arg.as_str() {
+            "--config" | "-c" => {
+                let Some(path) = it.next() else {
+                    eprintln!("coderef explain: --config requires a value");
+                    return ExitCode::from(2);
+                };
+                config_path = Some(path);
+            }
+            "--report" => {
+                let Some(kind) = it.next() else {
+                    eprintln!("coderef explain: --report requires `text` or `json`");
+                    return ExitCode::from(2);
+                };
+                report = match kind.as_str() {
+                    "text" => Report::Text,
+                    "json" => Report::Json,
+                    other => {
+                        eprintln!(
+                            "coderef explain: --report must be `text` or `json` (got `{other}`)"
+                        );
+                        return ExitCode::from(2);
+                    }
+                };
+            }
+            "--help" | "-h" => {
+                print!("{}", help::EXPLAIN_HELP);
+                return ExitCode::SUCCESS;
+            }
+            _ if input.is_none() => input = Some(arg),
+            _ => {
+                eprintln!("coderef explain: unexpected argument `{arg}`");
+                return ExitCode::from(2);
+            }
+        }
+    }
+
+    let Some(input) = input else {
+        eprintln!("coderef explain: missing <input>");
+        eprintln!("usage: coderef explain [--config <path>] [--report text|json] <input>");
+        return ExitCode::from(2);
+    };
+
+    let cfg_path = config_path.unwrap_or_else(|| "./.coderef.jsonc".into());
+    let cfg = match coderef_core::config::Config::from_file(&cfg_path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("coderef explain: failed to load config `{cfg_path}`: {e}");
+            return ExitCode::from(2);
+        }
+    };
+
+    let report_value = coderef_core::explain::explain(&cfg, &input);
+
+    match report {
+        Report::Json => match serde_json::to_string_pretty(&report_value) {
+            Ok(s) => {
+                println!("{s}");
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("coderef explain: JSON encoding failed: {e}");
+                ExitCode::from(3)
+            }
+        },
+        Report::Text => {
+            print_explain_text(&report_value);
+            ExitCode::SUCCESS
+        }
+    }
+}
+
+fn print_explain_text(report: &coderef_core::explain::ExplainReport) {
+    println!("Input: {:?}", report.input);
+    println!();
+    if report.matches.is_empty() {
+        println!("No configured pattern matches this input.");
+    } else {
+        let n = report.matches.len();
+        let plural = if n == 1 { "" } else { "es" };
+        println!("Match{plural}: {n}");
+        println!();
+        for m in &report.matches {
+            println!(
+                "  [{id}]  ({kind:?})",
+                id = m.pattern_id,
+                kind = m.pattern_kind
+            );
+            if let Some(desc) = &m.description {
+                for line in desc.lines() {
+                    println!("    {line}");
+                }
+            }
+            println!("    matched:   {text:?}", text = m.matched_text);
+            if !m.captures.is_empty() {
+                let caps: Vec<String> = m
+                    .captures
+                    .iter()
+                    .map(|(k, v)| format!("{k}={v:?}"))
+                    .collect();
+                println!("    captures:  {captures}", captures = caps.join(", "));
+            }
+            println!("    target:    {target}", target = m.target);
+            if let Some(title) = &m.title {
+                println!("    title:     {title}");
+            }
+            if m.priority != 0 {
+                println!("    priority:  {p}", p = m.priority);
+            }
+            for note in &m.scope_notes {
+                for (i, line) in note.lines().enumerate() {
+                    if i == 0 {
+                        println!("    scope:     {line}");
+                    } else {
+                        println!("               {line}");
+                    }
+                }
+            }
+            for w in &m.resolution_warnings {
+                println!("    warning:   {w}");
+            }
+            println!();
+        }
+    }
+    if !report.non_matching_pattern_ids.is_empty() {
+        let n = report.non_matching_pattern_ids.len();
+        let plural = if n == 1 { "" } else { "s" };
+        println!(
+            "Did NOT match {n} pattern{plural}: {}",
+            report.non_matching_pattern_ids.join(", ")
+        );
     }
 }
 

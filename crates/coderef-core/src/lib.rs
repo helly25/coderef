@@ -19,6 +19,7 @@ pub mod comment;
 pub mod config;
 pub mod doctor;
 pub mod error;
+pub mod explain;
 pub mod pattern;
 pub mod reference;
 pub mod scan;

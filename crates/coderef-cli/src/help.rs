@@ -173,6 +173,49 @@ EXAMPLES
     coderef doctor --report json . | jq '.diagnostics[] | select(.severity == \"error\")'
 ";
 
+pub const EXPLAIN_HELP: &str = "\
+USAGE
+    coderef explain [OPTIONS] <input>
+
+DESCRIPTION
+    Given an exact piece of text, report which configured patterns
+    match it, what their captures resolve to, what target each
+    would link to, and which scope filters would apply at scan time.
+
+    Designed for debugging \"why isn't my pattern matching?\" or
+    \"what does this reference actually resolve to?\". Scope filters
+    are *reported*, not enforced: explain shows you what would
+    happen if the text were placed somewhere matching the pattern's
+    scope (so commentsOnly = true patterns still appear in the
+    output for plain-text input).
+
+ARGUMENTS
+    <input>     The literal text to explain. Quote it if it contains
+                shell metacharacters or spaces.
+
+OPTIONS
+    -c, --config <path>
+        Path to .coderef.jsonc. Defaults to ./.coderef.jsonc.
+
+    --report text|json
+        Output format. `text` (default) prints a human-readable
+        block per matching pattern; `json` emits the underlying
+        `ExplainReport` for tooling.
+
+    -h, --help
+        Show this help and exit.
+
+EXIT CODES
+    0  Explain completed (regardless of whether any pattern matched).
+    2  Usage / config error.
+    3  Output encoding error (when --report json is given).
+
+EXAMPLES
+    coderef explain 'TODO(@alice)'
+    coderef explain 'DOCREF(/docs/test-plan.md)'
+    coderef explain --report json 'JIRA(PROJ-1)' | jq '.matches[].target'
+";
+
 pub const PATTERNS_HELP: &str = "\
 USAGE
     coderef patterns [OPTIONS] [<id>]
@@ -227,6 +270,7 @@ SUBCOMMANDS
                                  broken refs
     doctor [opts] [<root>]       Static + scan-dependent integrity checks
     patterns [opts] [<id>]       Inspect configured patterns
+    explain [opts] <input>       Show what each pattern would do with <input>
     help [<subcommand>]          Show detailed help for a subcommand
 
     `coderef help <subcommand>` and `coderef <subcommand> --help` produce
