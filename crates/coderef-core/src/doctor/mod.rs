@@ -182,9 +182,11 @@ pub fn run_doctor_with_workspace(
                     "if this is a shared / template config, leave it.\n\
                      otherwise:\n\
                        - remove the pattern,\n\
-                       - tighten `scope.include` to a subtree where you expect matches, or\n\
-                       - escalate the severity in your local config (the `severity` field on \
-                     the pattern) to make the check fail."
+                       - tighten `scope.include` to a subtree where you expect matches,\n\
+                       - escalate the severity for this one pattern via \
+                     `patterns.<id>.severity: { \"pattern.unused\": \"error\" }`, or\n\
+                       - escalate it for every pattern in this config via the top-level \
+                     `severity: { \"pattern.unused\": \"error\" }`."
                         .into(),
                 ),
             });
