@@ -22,6 +22,7 @@ pub use self::scope::ScopeConfig;
 pub use self::verify::VerifyToggle;
 
 use indexmap::IndexMap;
+#[cfg(feature = "schemars")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -32,7 +33,8 @@ use thiserror::Error;
 /// `IndexMap` is used in place of `HashMap` so that pattern declaration
 /// order is preserved — relevant for tie-breaking when two patterns share
 /// the same `priority` (DESIGN.md §5.5, §9.2).
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct Config {
     /// JSON Schema URL for editor autocomplete. Ignored by the engine.

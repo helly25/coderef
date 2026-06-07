@@ -1,10 +1,12 @@
 //! Local-path resolver configuration. See `DESIGN.md` §6.
 
+#[cfg(feature = "schemars")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// How to interpret `kind: "local"` paths. See `DESIGN.md` §6.1.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub enum AnchorMode {
     /// Both `/path` and `path` anchor at workspace root.
@@ -17,7 +19,8 @@ pub enum AnchorMode {
 }
 
 /// Filesystem case-sensitivity policy. See `DESIGN.md` §6.2.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(JsonSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum CaseSensitivity {
     /// Honour the filesystem (insensitive on macOS default + Windows,
@@ -31,7 +34,8 @@ pub enum CaseSensitivity {
 }
 
 /// Local-path resolution for `kind: "local"` patterns. See `DESIGN.md` §6.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(JsonSchema))]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct LocalResolveConfig {
     /// Search root; defaults to `${workspaceFolder}`. Supports variables.

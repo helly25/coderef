@@ -18,20 +18,29 @@ name = "coderef_core"
 [[bin]]
 name              = "coderef-gen-schema"
 path              = "src/bin/gen_schema.rs"
-required-features = []
+required-features = ["schemars"]
 
 [features]
-default = []
+# `schemars` is in the default set: every consumer that wants JsonSchema
+# (CLI, the gen-schema bin, downstream tooling) gets it without opt-in.
+# The WASM binding crate turns this off via `default-features = false`
+# so the schemars dep + every JsonSchema derive's expanded code drops
+# out of the wasm32 build, saving ~200 KB of binary.
+default = ["schemars"]
 # wasm build target. Stubs out std::process / std::env / fs walking on the
 # wasm32 target so the same crate compiles to a no-I/O library suitable for
 # in-process editor embedding (DESIGN.md §14.5.1).
-wasm    = []
+wasm     = []
+# Re-export of the optional schemars dep. Enabling this feature pulls in
+# `schemars` AND triggers the `cfg_attr(feature = "schemars",
+# derive(JsonSchema))` on every config / severity / pattern type.
+schemars = ["dep:schemars"]
 
 [dependencies]
 serde        = { workspace = true }
 serde_json   = { workspace = true }
 jsonc-parser = { workspace = true }
-schemars     = { workspace = true }
+schemars     = { workspace = true, optional = true }
 fancy-regex  = { workspace = true }
 thiserror    = { workspace = true }
 indexmap     = { workspace = true }

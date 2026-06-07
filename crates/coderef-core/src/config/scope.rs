@@ -5,11 +5,13 @@
 //! present in the type for forward compatibility but ignored by the v0.1
 //! engine.
 
+#[cfg(feature = "schemars")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Where a pattern is applied. See `DESIGN.md` §5.4.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct ScopeConfig {
     /// Gitignore-style globs to include. Empty = include everything.

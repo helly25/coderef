@@ -1,6 +1,7 @@
 //! Pattern definition types. See `DESIGN.md` §5.
 
 use indexmap::IndexMap;
+#[cfg(feature = "schemars")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -14,7 +15,8 @@ use crate::severity::Severity;
 /// v0.1 implements `Url` and `Local`. `IfChange` is accepted by the schema
 /// so v0.2 configs parse, but the v0.1 engine rejects it during scan.
 /// `Command` is reserved for the post-v0.4 backlog.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(JsonSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum PatternKind {
     /// Target is a URL string.
@@ -32,7 +34,8 @@ pub enum PatternKind {
 ///
 /// Many fields are tagged for later versions; they are accepted by the
 /// schema and stored on `Pattern` but not exercised by the v0.1 engine.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct Pattern {
     /// Resolver kind. Defaults to `Url`. See `DESIGN.md` §5.2.
@@ -92,7 +95,8 @@ pub struct Pattern {
 }
 
 /// One target in a multi-target pattern. See `DESIGN.md` §5.3.1 (v0.3).
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct TargetSpec {
     /// Display label for the hover / "Open with…" picker.
@@ -110,7 +114,8 @@ pub struct TargetSpec {
 
 /// Per-pattern action overrides (open / preview / verify).
 /// See `DESIGN.md` §5.3.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct ActionsConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -123,7 +128,8 @@ pub struct ActionsConfig {
 
 /// One action. The full set of fields is accepted by the schema so v0.2+
 /// configs parse; the v0.1 engine consumes only `kind` and `url`.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct ActionConfig {
     /// Action kind (e.g. `url`, `http`, `file`, `static`).

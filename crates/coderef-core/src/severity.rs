@@ -1,6 +1,7 @@
 //! Diagnostic severity, used uniformly across config, doctor, and reports.
 //! See `DESIGN.md` §9.1 for the canonical set.
 
+#[cfg(feature = "schemars")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -9,19 +10,9 @@ use serde::{Deserialize, Serialize};
 /// Order is significant: a `max` over a set of severities is meaningful —
 /// `Off < Hint < Info < Warning < Error`.
 #[derive(
-    Clone,
-    Copy,
-    Debug,
-    Default,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
-    Serialize,
-    Deserialize,
-    JsonSchema,
+    Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize,
 )]
+#[cfg_attr(feature = "schemars", derive(JsonSchema))]
 #[serde(rename_all = "kebab-case")]
 pub enum Severity {
     /// The check is disabled; produces no diagnostic.

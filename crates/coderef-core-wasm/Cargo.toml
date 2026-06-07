@@ -18,7 +18,12 @@ crate-type = ["cdylib", "rlib"]
 name       = "coderef_core_wasm"
 
 [dependencies]
-coderef-core       = { path = "../coderef-core" }
+# default-features = false drops `schemars` — the schemars dep + every
+# JsonSchema derive's expanded code are cut from the wasm32 build,
+# saving ~200 KB. The JsonSchema impls are only useful at host build
+# time (gen-schema bin); the runtime that the wasm consumer cares
+# about doesn't depend on them.
+coderef-core       = { path = "../coderef-core", default-features = false }
 serde              = { workspace = true }
 serde_json         = { workspace = true }
 wasm-bindgen       = "0.2"
