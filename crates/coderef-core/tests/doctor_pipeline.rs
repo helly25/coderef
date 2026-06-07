@@ -156,6 +156,83 @@ fn doctor_pattern_severity_override_demotes_regex_invalid_from_error_to_warning(
 }
 
 #[test]
+fn doctor_workspace_severity_override_demotes_all_patterns_unused_to_off() {
+    let root = tmpdir("ws-off");
+    let cfg = Config::from_jsonc_str(
+        r#"{
+            "severity": { "pattern.unused": "off" },
+            "patterns": {
+                "todo": {
+                    "regex": "TODO\\(@(?<user>\\w+)\\)",
+                    "target": "x/${user}"
+                },
+                "jira": {
+                    "regex": "JIRA\\((?<t>[A-Z]+-\\d+)\\)",
+                    "target": "j/${t}"
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+    let report = run_doctor_with_workspace(&root, &cfg).unwrap();
+    let found = report
+        .diagnostics
+        .iter()
+        .any(|d| d.check == "pattern.unused");
+    assert!(
+        !found,
+        "workspace severity off must suppress pattern.unused for every pattern; got: {:#?}",
+        report.diagnostics
+    );
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn doctor_workspace_severity_override_is_overridden_by_per_pattern() {
+    use coderef_core::severity::Severity;
+    let root = tmpdir("layered");
+    let cfg = Config::from_jsonc_str(
+        r#"{
+            "severity": { "pattern.unused": "off" },
+            "patterns": {
+                "strict-todo": {
+                    "regex": "TODO\\(@(?<user>\\w+)\\)",
+                    "target": "x/${user}",
+                    "severity": { "pattern.unused": "error" }
+                },
+                "lax-jira": {
+                    "regex": "JIRA\\((?<t>[A-Z]+-\\d+)\\)",
+                    "target": "j/${t}"
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+    let report = run_doctor_with_workspace(&root, &cfg).unwrap();
+    // strict-todo's per-pattern Error override wins over the workspace
+    // Off; lax-jira gets the workspace Off.
+    let strict = report
+        .diagnostics
+        .iter()
+        .find(|d| d.check == "pattern.unused" && d.pattern_id.as_deref() == Some("strict-todo"));
+    let lax = report
+        .diagnostics
+        .iter()
+        .find(|d| d.check == "pattern.unused" && d.pattern_id.as_deref() == Some("lax-jira"));
+    assert_eq!(
+        strict.map(|d| d.severity),
+        Some(Severity::Error),
+        "per-pattern Error should win over workspace Off",
+    );
+    assert!(
+        lax.is_none(),
+        "no per-pattern override → workspace Off applies; got: {:#?}",
+        report.diagnostics
+    );
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn doctor_static_errors_surface_alongside_scan_dependent_warnings() {
     let root = tmpdir("mixed");
     // No source file → 'todo' will be unused. And 'bad' has an invalid

@@ -28,6 +28,8 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use thiserror::Error;
 
+use crate::severity::Severity;
+
 /// Top-level coderef configuration. See `DESIGN.md` §7.2 / §7.3.
 ///
 /// `IndexMap` is used in place of `HashMap` so that pattern declaration
@@ -61,6 +63,17 @@ pub struct Config {
         skip_serializing_if = "Option::is_none"
     )]
     pub workspace_root: Option<String>,
+
+    /// Workspace-level severity overrides for doctor checks.
+    ///
+    /// Resolution order is: per-pattern `Pattern.severity[check_id]`,
+    /// then this map, then the check's hardcoded default. Use it to
+    /// suppress a check across every pattern in the repo (`{
+    /// "pattern.captureUnused": "off" }`), or escalate a check
+    /// globally (`{ "pattern.unused": "error" }`) without sprinkling
+    /// overrides on every pattern.
+    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+    pub severity: IndexMap<String, Severity>,
 }
 
 impl Config {

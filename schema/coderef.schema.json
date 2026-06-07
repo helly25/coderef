@@ -37,6 +37,13 @@
         "string",
         "null"
       ]
+    },
+    "severity": {
+      "description": "Workspace-level severity overrides for doctor checks.\n\nResolution order is: per-pattern `Pattern.severity[check_id]`, then this map, then the check's hardcoded default. Use it to suppress a check across every pattern in the repo (`{ \"pattern.captureUnused\": \"off\" }`), or escalate a check globally (`{ \"pattern.unused\": \"error\" }`) without sprinkling overrides on every pattern.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/definitions/Severity"
+      }
     }
   },
   "additionalProperties": false,
