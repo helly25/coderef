@@ -28,3 +28,11 @@ serde-wasm-bindgen = "0.6"
 # Host-side tests of the binding logic; the wasm32 build is tested via
 # `wasm-pack` + node smoke in CI (see .github/workflows/ci.yml).
 wasm-bindgen-test = "0.3"
+
+# wasm-pack-specific metadata. wasm-opt is disabled because the version
+# wasm-pack bundles (binaryen ~119) doesn't enable bulk-memory ops by
+# default, which the bulk-memory instructions emitted by recent rustc
+# require. Re-enable once wasm-pack ships a newer binaryen, or pass
+# `--enable-bulk-memory` via a wasm-opt config block.
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false
