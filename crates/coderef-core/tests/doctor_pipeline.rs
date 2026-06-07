@@ -77,6 +77,85 @@ fn doctor_pattern_with_matches_is_not_flagged_unused() {
 }
 
 #[test]
+fn doctor_pattern_severity_override_escalates_unused_to_error() {
+    use coderef_core::severity::Severity;
+    let root = tmpdir("escalate");
+    let cfg = Config::from_jsonc_str(
+        r#"{ "patterns": { "todo": {
+            "regex": "TODO\\(@(?<user>\\w+)\\)",
+            "target": "x/${user}",
+            "severity": { "pattern.unused": "error" }
+        } } }"#,
+    )
+    .unwrap();
+    let report = run_doctor_with_workspace(&root, &cfg).unwrap();
+    let diag = report
+        .diagnostics
+        .iter()
+        .find(|d| d.check == "pattern.unused")
+        .expect("expected pattern.unused diagnostic");
+    assert_eq!(diag.severity, Severity::Error, "diag: {diag:#?}");
+    // With an Error-severity diagnostic, the report must fail.
+    assert!(
+        !report.passed(),
+        "Error-escalated pattern.unused should fail passed()"
+    );
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn doctor_pattern_severity_override_off_suppresses_diagnostic() {
+    let root = tmpdir("suppress");
+    let cfg = Config::from_jsonc_str(
+        r#"{ "patterns": { "todo": {
+            "regex": "TODO\\(@(?<user>\\w+)\\)",
+            "target": "x/${user}",
+            "severity": { "pattern.unused": "off" }
+        } } }"#,
+    )
+    .unwrap();
+    let report = run_doctor_with_workspace(&root, &cfg).unwrap();
+    let found = report
+        .diagnostics
+        .iter()
+        .any(|d| d.check == "pattern.unused");
+    assert!(
+        !found,
+        "severity: off must suppress emission entirely; got: {:#?}",
+        report.diagnostics
+    );
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn doctor_pattern_severity_override_demotes_regex_invalid_from_error_to_warning() {
+    use coderef_core::severity::Severity;
+    let root = tmpdir("demote");
+    let cfg = Config::from_jsonc_str(
+        r#"{ "patterns": { "x": {
+            "regex": "(?<u>X",
+            "target": "x",
+            "severity": { "pattern.regexInvalid": "warning" }
+        } } }"#,
+    )
+    .unwrap();
+    let report = run_doctor_with_workspace(&root, &cfg).unwrap();
+    let diag = report
+        .diagnostics
+        .iter()
+        .find(|d| d.check == "pattern.regexInvalid")
+        .expect("expected pattern.regexInvalid diagnostic");
+    assert_eq!(diag.severity, Severity::Warning, "diag: {diag:#?}");
+    // Warning-only → exit 0.
+    assert!(
+        report.passed(),
+        "Warning-only report should pass — got: {:#?}",
+        report.diagnostics
+    );
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn doctor_static_errors_surface_alongside_scan_dependent_warnings() {
     let root = tmpdir("mixed");
     // No source file → 'todo' will be unused. And 'bad' has an invalid
