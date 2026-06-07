@@ -35,3 +35,34 @@ This entry is kept as documentation of the template. New entries go
 below.
 
 ---
+
+## VSCode extension end-to-end (DocumentLink + Hover under Extension Host)
+
+- **What was verified**: with the v0.1 extension PR, that activating
+  the extension in a workspace containing a `.coderef.jsonc` results
+  in references being clickable (DocumentLink) and producing a hover
+  tooltip (Hover) on every match. Both URL and local-path kinds were
+  verified manually by spawning the Extension Host (`F5` in the dev
+  workspace), opening a test file with planted `TODO(@user)` and
+  `DOCREF(/docs/x.md)` markers, and observing the link decoration +
+  hover popup.
+- **How it was verified**: manual smoke test, one-shot. The unit
+  tests in `extension/src/providers.test.ts` cover `linkTargetFor`
+  (the pure URL/local resolution function) via a mocked `vscode`
+  module, and the WASM smoke in CI covers the engine. What is *not*
+  covered by code yet: the actual VSCode runtime wiring — provider
+  registration, document open/change cache invalidation, config-file
+  watcher, error paths when the WASM engine fails to load.
+- **What test should replace this note**: an `@vscode/test-electron`
+  integration test that:
+    1. Boots a real VSCode instance pointed at a fixture workspace.
+    2. Waits for the extension to activate.
+    3. Opens a fixture document, queries
+       `vscode.commands.executeCommand('vscode.executeLinkProvider', uri)`
+       and asserts the returned links match the planted refs.
+    4. Queries `vscode.executeHoverProvider` and asserts the hover
+       contains the pattern id + target.
+- **Tracked**: extension PR + a follow-up issue
+  `extension: wire @vscode/test-electron for runtime integration tests`.
+
+---

@@ -279,6 +279,9 @@ jobs:
       - name: eslint
         run: npx eslint src || true   # v0.0.0 has no eslint config yet
 
+      - name: Unit tests (node --test, pure-function paths)
+        run: npm test
+
   # ---------------------------------------------------------------------------
   npm-wrapper:
     name: npm wrapper smoke
