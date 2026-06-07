@@ -1,0 +1,140 @@
+name: Release
+
+# Fires only on annotated tags shaped like `v0.1.0`, `v0.2.1-rc1`, etc.
+# Builds the CLI for each supported target, uploads the binaries +
+# checksums + LICENSE bundle as release assets, and creates a GitHub
+# Release pointing at the tag. The npm wrapper's install.js downloads
+# from the URLs this workflow publishes.
+#
+# The npm publish step is intentionally absent until v0.2 — it would
+# need NPM_TOKEN in the repo secrets and a deliberate decision to
+# ship to the registry. For v0.1, consumers install from the GitHub
+# release directly (or use `cargo install --path crates/coderef-cli`
+# from a checkout).
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+      - "v*.*.*-*"
+  workflow_dispatch: {} # manual fire for ad-hoc dry runs.
+
+permissions:
+  contents: write # to create/update the Release.
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            asset_suffix: linux-x64
+            archive_ext: tar.gz
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            asset_suffix: linux-arm64
+            archive_ext: tar.gz
+            cross: true
+          - target: x86_64-apple-darwin
+            os: macos-13
+            asset_suffix: macos-x64
+            archive_ext: tar.gz
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            asset_suffix: macos-arm64
+            archive_ext: tar.gz
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            asset_suffix: windows-x64
+            archive_ext: zip
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install
+          rustup target add ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}-${{ hashFiles('Cargo.lock') }}
+
+      - name: Install cross-compile tooling (aarch64 linux only)
+        if: matrix.cross == true
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          mkdir -p .cargo
+          {
+            echo '[target.aarch64-unknown-linux-gnu]'
+            echo 'linker = "aarch64-linux-gnu-gcc"'
+          } >> .cargo/config.toml
+
+      - name: cargo build --release
+        run: cargo build --release --locked --bin coderef --target ${{ matrix.target }}
+
+      - name: Package (tar.gz / zip)
+        shell: bash
+        run: |
+          ver="${GITHUB_REF#refs/tags/}"
+          ver="${ver:-v0.0.0-dryrun}"
+          name="coderef-${ver}-${{ matrix.asset_suffix }}"
+          stage=$(mktemp -d)
+          mkdir "$stage/$name"
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp "target/${{ matrix.target }}/release/coderef.exe" "$stage/$name/"
+          else
+            cp "target/${{ matrix.target }}/release/coderef" "$stage/$name/"
+          fi
+          cp LICENSE README.md "$stage/$name/"
+          cd "$stage"
+          if [ "${{ matrix.archive_ext }}" = "zip" ]; then
+            7z a "$name.zip" "$name" > /dev/null
+          else
+            tar -czf "$name.tar.gz" "$name"
+          fi
+          # SHA-256 for the install.js integrity check.
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            shasum -a 256 "$name.${{ matrix.archive_ext }}" | awk '{print $1}' > "$name.${{ matrix.archive_ext }}.sha256"
+          else
+            sha256sum "$name.${{ matrix.archive_ext }}" | awk '{print $1}' > "$name.${{ matrix.archive_ext }}.sha256"
+          fi
+          mkdir -p "$GITHUB_WORKSPACE/_dist"
+          cp "$name.${{ matrix.archive_ext }}" "$name.${{ matrix.archive_ext }}.sha256" "$GITHUB_WORKSPACE/_dist/"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coderef-${{ matrix.asset_suffix }}
+          path: _dist/*
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: _dist
+          merge-multiple: true
+
+      - name: List assets
+        run: ls -la _dist/
+
+      - name: Create / update the GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${GITHUB_REF#refs/tags/}"
+          gh release view "$tag" >/dev/null 2>&1 || \
+            gh release create "$tag" \
+              --title "coderef $tag" \
+              --notes "Automated release. See CHANGELOG when one ships, or DESIGN.md §20 for the planning horizon."
+          gh release upload "$tag" _dist/* --clobber

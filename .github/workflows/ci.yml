@@ -296,28 +296,44 @@ jobs:
   npm-wrapper:
     name: npm wrapper smoke
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: npm/coderef
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (cargo for the source-build fallback)
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: npm-wrapper-${{ hashFiles('Cargo.lock') }}
 
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
 
-      - name: npm install (runs postinstall)
+      - name: cargo build --release --bin coderef (sibling binary for install.js to discover)
+        run: cargo build --release --locked --bin coderef
+
+      - name: npm install (runs postinstall → sibling-binary path)
+        working-directory: npm/coderef
         run: npm install --no-audit --no-fund
 
-      - name: bin runs (expect exit 127, no binary at v0.0.0)
+      - name: Wrapper forwards args + exit codes
+        working-directory: npm/coderef
+        shell: bash
         run: |
+          # Verify the wrapper found + installed the binary and that
+          # invoking it through the wrapper produces the same output
+          # as invoking it directly.
+          want=$(./bin/coderef --version)
+          have=$(node ./bin/coderef.js --version)
+          echo "wrapper: $have"
+          test "$want" = "$have" || { echo "version mismatch: $want vs $have"; exit 1; }
+          # Exit code propagation: unknown subcommand → exit 2.
           set +e
-          node ./bin/coderef.js
+          node ./bin/coderef.js bogus-subcommand
           code=$?
-          if [ $code -ne 127 ]; then
-            echo "expected exit 127, got $code"
-            exit 1
-          fi
+          set -e
+          test $code -eq 2 || { echo "expected exit 2 for unknown subcommand, got $code"; exit 1; }
 
   # ---------------------------------------------------------------------------
   schema:
