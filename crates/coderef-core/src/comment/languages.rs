@@ -77,7 +77,14 @@ const HTML: Language = Language {
 const MARKDOWN: Language = Language {
     name: "markdown",
     line_comments: &[],
-    block_comments: &[("<!--", "-->")],
+    // No block-comment delimiters in v0.1: detecting `<!-- -->` correctly
+    // requires skipping fenced-code-blocks + inline-backticks (otherwise
+    // a literal `<!--` inside a code example, like in DESIGN.md, starts
+    // a spurious comment range that swallows the rest of the doc until
+    // the next `-->`). Markdown-aware comment parsing lands in v0.2;
+    // until then, `commentsOnly: true` matches nothing in .md files —
+    // the safe default per DESIGN §5.4.1.
+    block_comments: &[],
     string_delimiters: &[],
 };
 
@@ -144,8 +151,16 @@ mod tests {
     }
 
     #[test]
-    fn test_language_for_extension_markdown_has_html_comments() {
+    fn test_language_for_extension_markdown_has_no_block_comments_in_v0_1() {
+        // Per the comment in languages.rs MARKDOWN: <!-- --> is a v0.2
+        // feature; needs fenced-code-block awareness to avoid
+        // false-positive comment ranges from <!-- literals inside ``` ```.
         let lang = language_for_extension("md").unwrap();
-        assert_eq!(lang.block_comments, &[("<!--", "-->")]);
+        assert!(
+            lang.block_comments.is_empty(),
+            "markdown block_comments must be empty in v0.1 to avoid the \
+             DESIGN.md-class bug where <!-- inside backticks opens a \
+             spurious comment range; v0.2 wires fenced-block-aware parsing",
+        );
     }
 }

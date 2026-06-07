@@ -277,10 +277,26 @@ mod tests {
     // ---------- Markdown ----------
 
     #[test]
-    fn test_detect_markdown_html_block_comment() {
+    fn test_detect_markdown_yields_no_comment_ranges_in_v0_1() {
+        // v0.1 markdown has no comment delimiters (see comment/languages.rs
+        // MARKDOWN). The detector must not flag <!-- --> ranges; otherwise
+        // a literal <!-- inside a fenced code block in DESIGN.md / any
+        // README opens a spurious comment range that swallows the rest
+        // of the doc until the next -->.
         let content = "# Title\n<!-- hidden -->\nbody";
         let r = ranges_for("md", content);
-        assert_eq!(slices_of(&r, content), vec!["<!-- hidden -->"]);
+        assert!(r.is_empty(), "got: {:?}", slices_of(&r, content));
+    }
+
+    #[test]
+    fn test_detect_markdown_with_backticked_html_comment_does_not_open_range() {
+        // The regression case: literal <!-- inside a code-fence literal,
+        // followed much later by another --> elsewhere. v0.1's empty
+        // markdown comment-set means neither of these is treated as a
+        // comment opener / closer, which is the safe v0.1 default.
+        let content = "Doc says `<!--` is the opener.\n\nLater: `-->` closes.";
+        let r = ranges_for("md", content);
+        assert!(r.is_empty(), "got: {:?}", slices_of(&r, content));
     }
 
     // ---------- Range utilities ----------
