@@ -61,6 +61,13 @@
           "description": "`fancy-regex`-compatible regex with named captures. See §5.1.",
           "type": "string"
         },
+        "description": {
+          "description": "Free-form description of what this pattern is for and when it applies. Surfaces in `coderef patterns`, hover tooltips, and doctor diagnostics that name the pattern. Optional but strongly recommended for shared / template configs.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "flags": {
           "description": "Regex flags applied on top of the always-on `g` mode.",
           "type": [

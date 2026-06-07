@@ -45,6 +45,13 @@ pub struct Pattern {
     /// `fancy-regex`-compatible regex with named captures. See §5.1.
     pub regex: String,
 
+    /// Free-form description of what this pattern is for and when it
+    /// applies. Surfaces in `coderef patterns`, hover tooltips, and
+    /// doctor diagnostics that name the pattern. Optional but strongly
+    /// recommended for shared / template configs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+
     /// Regex flags applied on top of the always-on `g` mode.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub flags: Option<String>,

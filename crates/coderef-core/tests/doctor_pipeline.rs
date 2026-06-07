@@ -41,7 +41,7 @@ fn doctor_flags_pattern_unused_in_an_empty_workspace_as_info_not_warning() {
     // explains the escalation path.
     assert_eq!(diag.severity, Severity::Info, "diag: {diag:#?}");
     assert!(
-        diag.message.contains("scanned"),
+        diag.message.contains("workspace scan"),
         "message lacks scan context: {}",
         diag.message
     );

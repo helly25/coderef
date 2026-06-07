@@ -1,12 +1,20 @@
 //! coderef CLI.
 //!
-//! v0.0.0 → v0.1 transition. Foundation slice (`config show`, `list`)
-//! lets a user validate a `.coderef.jsonc` and dump all references
-//! discovered in a workspace. Real verification subcommands (`check`,
-//! `changes`, `upgrade`, …) land per the v0.1 roadmap in
-//! `DESIGN.md` §20.
+//! Subcommand surface as of v0.2:
+//!   config show <path>           Parse + pretty-print a .coderef.jsonc
+//!   list [opts] <root>           Scan + emit every Reference found
+//!   check [opts] <root>          Scan + verify; exits 1 on broken refs
+//!   doctor [opts] [<root>]       Static + scan-dependent integrity checks
+//!   patterns [opts] [<id>]       Inspect configured patterns
+//!
+//! Every subcommand accepts `--help` (or `-h`) for detailed sectioned
+//! help (USAGE / DESCRIPTION / ARGUMENTS / OPTIONS / EXIT CODES /
+//! EXAMPLES). The top-level `coderef --help` lists subcommands; drill
+//! down for specifics.
 
 use std::process::ExitCode;
+
+mod help;
 
 fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
@@ -35,6 +43,8 @@ fn main() -> ExitCode {
         Some("list") => cmd_list(args.collect()),
         Some("check") => cmd_check(args.collect()),
         Some("doctor") => cmd_doctor(args.collect()),
+        Some("patterns") => cmd_patterns(args.collect()),
+        Some("help") => cmd_help(args.collect()),
         Some(other) => {
             eprintln!("coderef: unknown subcommand `{other}`");
             eprintln!();
@@ -45,6 +55,10 @@ fn main() -> ExitCode {
 }
 
 fn cmd_config_show(path: Option<String>) -> ExitCode {
+    if let Some("--help" | "-h") = path.as_deref() {
+        print!("{}", help::CONFIG_SHOW_HELP);
+        return ExitCode::SUCCESS;
+    }
     let Some(path) = path else {
         eprintln!("coderef config show: missing <path>");
         eprintln!("usage: coderef config show <path-to-.coderef.jsonc>");
@@ -93,10 +107,7 @@ fn cmd_list(args: Vec<String>) -> ExitCode {
             }
             "--json" => as_json = true,
             "--help" | "-h" => {
-                println!("Usage: coderef list [--config <path>] [--json] <root>");
-                println!();
-                println!("  --config <path>   Path to the .coderef.jsonc (default: <root>/.coderef.jsonc)");
-                println!("  --json            Emit JSON instead of one-line-per-reference text");
+                print!("{}", help::LIST_HELP);
                 return ExitCode::SUCCESS;
             }
             _ if root.is_none() => root = Some(arg),
@@ -207,16 +218,7 @@ fn cmd_check(args: Vec<String>) -> ExitCode {
                 timeout_ms = v;
             }
             "--help" | "-h" => {
-                println!("Usage: coderef check [--config <path>] [--report text|json] [--timeout-ms N] <root>");
-                println!();
-                println!(
-                    "  --config <path>     Path to .coderef.jsonc (default: <root>/.coderef.jsonc)"
-                );
-                println!("  --report text|json  Output format (default: text)");
-                println!("  --timeout-ms N      Per-request timeout in ms (default: 10000)");
-                println!();
-                println!("Exit codes: 0 = all references resolved (or skipped); 1 = at least");
-                println!("one reference broke; 2 = usage / config / scan error.");
+                print!("{}", help::CHECK_HELP);
                 return ExitCode::SUCCESS;
             }
             _ if root.is_none() => root = Some(arg),
@@ -354,14 +356,7 @@ fn cmd_doctor(args: Vec<String>) -> ExitCode {
             }
             "--no-scan" => scan = false,
             "--help" | "-h" => {
-                println!("Usage: coderef doctor [--config <path>] [--report text|json] [--no-scan] [<root>]");
-                println!();
-                println!("  --config <path>     Path to .coderef.jsonc (default: <root>/.coderef.jsonc, or ./.coderef.jsonc)");
-                println!("  --report text|json  Output format (default: text)");
-                println!("  --no-scan           Static checks only (skip pattern.unused which needs a scan)");
-                println!();
-                println!("Exit codes: 0 = no errors; 1 = at least one error-severity diagnostic;");
-                println!("2 = usage / config error.");
+                print!("{}", help::DOCTOR_HELP);
                 return ExitCode::SUCCESS;
             }
             _ if root.is_none() => root = Some(arg),
@@ -417,74 +412,293 @@ fn cmd_doctor(args: Vec<String>) -> ExitCode {
 
 fn print_doctor_text(report: &coderef_core::doctor::DoctorReport) {
     use coderef_core::severity::Severity;
-    for d in &report.diagnostics {
+    for (i, d) in report.diagnostics.iter().enumerate() {
+        if i > 0 {
+            println!();
+        }
         let sev = match d.severity {
-            Severity::Error => "ERROR  ",
-            Severity::Warning => "warning",
-            Severity::Info => "info   ",
-            Severity::Hint => "hint   ",
-            Severity::Off => "off    ",
+            Severity::Error => "ERROR",
+            Severity::Warning => "warn",
+            Severity::Info => "info",
+            Severity::Hint => "hint",
+            Severity::Off => "off",
         };
         let pid = d
             .pattern_id
             .as_deref()
-            .map(|p| format!("[{p}] "))
+            .map(|p| format!(" [{p}]"))
             .unwrap_or_default();
-        println!(
-            "{sev}  {check}  {pid}{message}",
-            check = d.check,
-            message = d.message
-        );
+        // Header line: severity + check id + pattern id.
+        println!("{sev}  {check}{pid}", check = d.check);
+        // Body: message indented two spaces; embedded newlines kept.
+        println!("{}", indent_block(&d.message, "  "));
         if let Some(h) = &d.hint {
-            println!("           hint: {h}");
+            println!();
+            println!(
+                "  hint: {first_line}",
+                first_line = h.lines().next().unwrap_or("")
+            );
+            for line in h.lines().skip(1) {
+                println!("        {line}");
+            }
         }
     }
     if !report.diagnostics.is_empty() {
         println!();
+        println!("────────");
     }
-    println!(
-        "{total} diagnostic(s): {errors} error, {warnings} warning, {infos} info, {hints} hint",
-        total = report.total,
-        errors = report.errors,
-        warnings = report.warnings,
-        infos = report.infos,
-        hints = report.hints,
-    );
+    let mut parts: Vec<String> = Vec::new();
+    if report.errors > 0 {
+        parts.push(format!("{n} error", n = report.errors));
+    }
+    if report.warnings > 0 {
+        parts.push(format!("{n} warning", n = report.warnings));
+    }
+    if report.infos > 0 {
+        parts.push(format!("{n} info", n = report.infos));
+    }
+    if report.hints > 0 {
+        parts.push(format!("{n} hint", n = report.hints));
+    }
+    if parts.is_empty() {
+        println!("0 diagnostics — config is clean");
+    } else {
+        println!(
+            "{total} diagnostic{plural} — {breakdown}",
+            total = report.total,
+            plural = if report.total == 1 { "" } else { "s" },
+            breakdown = parts.join(", "),
+        );
+    }
+}
+
+/// Helper: prefix every line of `text` with `indent`. Preserves
+/// embedded newlines so a multi-line message (`"line one\n  line two"`)
+/// renders as a coherent block.
+fn indent_block(text: &str, indent: &str) -> String {
+    text.lines()
+        .map(|l| format!("{indent}{l}"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn print_help() {
-    println!(
-        "{banner}
+    println!("{banner}\n", banner = coderef_core::banner());
+    print!("{}", help::GLOBAL_HELP);
+}
 
-Usage:  coderef <subcommand> [options]
+/// `coderef help [<subcommand>...]`
+///
+/// Universal help entry point. `coderef help` prints global help;
+/// `coderef help <subcommand>` prints the detailed sectioned help
+/// for that subcommand (the same text as `coderef <subcommand> --help`).
+/// Two-word subcommands like `config show` are accepted: `coderef
+/// help config show`.
+fn cmd_help(args: Vec<String>) -> ExitCode {
+    let mut it = args.into_iter();
+    match it.next().as_deref() {
+        None | Some("help") => {
+            print_help();
+            ExitCode::SUCCESS
+        }
+        Some("--help" | "-h") => {
+            // help on the help command itself — describe how it works.
+            print!("{}", help::HELP_HELP);
+            ExitCode::SUCCESS
+        }
+        Some("config") => match it.next().as_deref() {
+            Some("show") => {
+                print!("{}", help::CONFIG_SHOW_HELP);
+                ExitCode::SUCCESS
+            }
+            Some(other) => {
+                eprintln!("coderef help config: unknown action `{other}`");
+                eprintln!("try `coderef help config show`");
+                ExitCode::from(2)
+            }
+            None => {
+                eprintln!("coderef help config: pick an action — try `coderef help config show`");
+                ExitCode::from(2)
+            }
+        },
+        Some("list") => {
+            print!("{}", help::LIST_HELP);
+            ExitCode::SUCCESS
+        }
+        Some("check") => {
+            print!("{}", help::CHECK_HELP);
+            ExitCode::SUCCESS
+        }
+        Some("doctor") => {
+            print!("{}", help::DOCTOR_HELP);
+            ExitCode::SUCCESS
+        }
+        Some("patterns") => {
+            print!("{}", help::PATTERNS_HELP);
+            ExitCode::SUCCESS
+        }
+        Some(other) => {
+            eprintln!("coderef help: unknown subcommand `{other}`");
+            eprintln!();
+            print_help();
+            ExitCode::from(2)
+        }
+    }
+}
 
-Subcommands implemented in v0.0.x foundation:
-  config show <path>           Parse and pretty-print a .coderef.jsonc
-  list [opts] <root>           Walk <root> and dump every reference found
-                               --config <path>  Override config location
-                               --json           Emit JSON
-  check [opts] <root>          Scan + verify every reference; exit 1 on failure
-                               --config <path>  Override config location
-                               --report json    Emit JSON report
-                               --timeout-ms N   Per-request timeout (default 10000)
-  doctor [opts] [<root>]       Static + scan-dependent integrity checks
-                               --config <path>  Override config location
-                               --report json    Emit JSON report
-                               --no-scan        Skip the workspace scan (static only)
+/// `coderef patterns [--config <path>] [--report text|json] [<id>]`
+///
+/// Inspector for configured patterns. Without <id>, prints a summary
+/// of all patterns. With <id>, prints full detail for that one.
+fn cmd_patterns(args: Vec<String>) -> ExitCode {
+    let mut config_path: Option<String> = None;
+    let mut report = Report::Text;
+    let mut id: Option<String> = None;
 
-Subcommands planned per DESIGN.md §20 (not yet implemented):
-  changes     Coupled-change verifier (v0.2)
-  upgrade     Rewrite legacy markers (v0.3)
-  explain     Show resolution for a single reference token
-  doctor      Run integrity checks against the config
-  cache       Manage the verification cache
-  lsp         LSP server mode (v0.4)
+    let mut it = args.into_iter();
+    while let Some(arg) = it.next() {
+        match arg.as_str() {
+            "--config" | "-c" => {
+                let Some(path) = it.next() else {
+                    eprintln!("coderef patterns: --config requires a value");
+                    return ExitCode::from(2);
+                };
+                config_path = Some(path);
+            }
+            "--report" => {
+                let Some(kind) = it.next() else {
+                    eprintln!("coderef patterns: --report requires `text` or `json`");
+                    return ExitCode::from(2);
+                };
+                report = match kind.as_str() {
+                    "text" => Report::Text,
+                    "json" => Report::Json,
+                    other => {
+                        eprintln!(
+                            "coderef patterns: --report must be `text` or `json` (got `{other}`)"
+                        );
+                        return ExitCode::from(2);
+                    }
+                };
+            }
+            "--help" | "-h" => {
+                print!("{}", help::PATTERNS_HELP);
+                return ExitCode::SUCCESS;
+            }
+            _ if id.is_none() => id = Some(arg),
+            _ => {
+                eprintln!("coderef patterns: unexpected argument `{arg}`");
+                return ExitCode::from(2);
+            }
+        }
+    }
 
-Options:
-  -h, --help      Show this help
-  -V, --version   Show version banner
+    let cfg_path = config_path.unwrap_or_else(|| "./.coderef.jsonc".into());
+    let cfg = match coderef_core::config::Config::from_file(&cfg_path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("coderef patterns: failed to load config `{cfg_path}`: {e}");
+            return ExitCode::from(2);
+        }
+    };
 
-For the working specification, see DESIGN.md in the repository root.",
-        banner = coderef_core::banner()
-    );
+    match (report, id) {
+        (Report::Json, None) => match serde_json::to_string_pretty(&cfg.patterns) {
+            Ok(s) => {
+                println!("{s}");
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("coderef patterns: JSON encoding failed: {e}");
+                ExitCode::from(3)
+            }
+        },
+        (Report::Json, Some(name)) => {
+            let Some(pat) = cfg.patterns.get(&name) else {
+                eprintln!("coderef patterns: no pattern `{name}` in {cfg_path}");
+                return ExitCode::from(2);
+            };
+            match serde_json::to_string_pretty(pat) {
+                Ok(s) => {
+                    println!("{s}");
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("coderef patterns: JSON encoding failed: {e}");
+                    ExitCode::from(3)
+                }
+            }
+        }
+        (Report::Text, None) => {
+            print_patterns_summary(&cfg);
+            ExitCode::SUCCESS
+        }
+        (Report::Text, Some(name)) => {
+            let Some(pat) = cfg.patterns.get(&name) else {
+                eprintln!("coderef patterns: no pattern `{name}` in {cfg_path}");
+                return ExitCode::from(2);
+            };
+            print_pattern_detail(&name, pat);
+            ExitCode::SUCCESS
+        }
+    }
+}
+
+fn print_patterns_summary(cfg: &coderef_core::config::Config) {
+    if cfg.patterns.is_empty() {
+        println!("(no patterns configured)");
+        return;
+    }
+    println!("PATTERNS ({n})", n = cfg.patterns.len());
+    println!();
+    for (id, pat) in &cfg.patterns {
+        println!("  {id}");
+        if let Some(desc) = &pat.description {
+            for line in desc.lines() {
+                println!("    {line}");
+            }
+        } else {
+            println!("    (no description — add `description: \"...\"` to document this pattern)");
+        }
+        println!("    regex:  {regex}", regex = pat.regex);
+        println!();
+    }
+    println!("Use `coderef patterns <id>` for full details.");
+}
+
+fn print_pattern_detail(id: &str, pat: &coderef_core::config::Pattern) {
+    println!("PATTERN: {id}");
+    println!();
+    if let Some(desc) = &pat.description {
+        println!("  Description:");
+        for line in desc.lines() {
+            println!("    {line}");
+        }
+        println!();
+    }
+    println!("  Kind:     {kind:?}", kind = pat.kind);
+    println!("  Regex:    {regex}", regex = pat.regex);
+    if let Some(target) = &pat.target {
+        println!("  Target:   {target}");
+    }
+    if let Some(title) = &pat.title {
+        println!("  Title:    {title}");
+    }
+    if let Some(scope) = &pat.scope {
+        println!();
+        println!("  Scope:");
+        println!("    commentsOnly: {b}", b = scope.comments_only);
+        if !scope.include.is_empty() {
+            println!("    include:");
+            for g in &scope.include {
+                println!("      - {g}");
+            }
+        }
+        if !scope.exclude.is_empty() {
+            println!("    exclude:");
+            for g in &scope.exclude {
+                println!("      - {g}");
+            }
+        }
+    }
 }
