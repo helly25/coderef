@@ -48,12 +48,15 @@
     }
   },
   "scripts": {
-    "compile": "tsc -p ./",
-    "watch":   "tsc -watch -p ./",
-    "lint":    "eslint src",
-    "test":    "node --test --import tsx src/providers.test.ts",
-    "package": "vsce package",
-    "publish": "vsce publish"
+    "compile":      "tsc -p ./",
+    "watch":        "tsc -watch -p ./",
+    "lint":         "eslint src",
+    "test":         "node --test --import tsx src/providers.test.ts",
+    "bundle-wasm":  "node ./scripts/bundle-wasm.cjs",
+    "build":        "npm run compile && npm run bundle-wasm",
+    "vscode:prepublish": "npm run build",
+    "package":      "npm run build && vsce package",
+    "publish":      "npm run build && vsce publish"
   },
   "devDependencies": {
     "@eslint/js":               "^9.39.4",

@@ -3,6 +3,7 @@
 .vscode-test.*
 src/**
 out/test/**
+scripts/**
 .github/**
 .trunk/**
 .gitignore
@@ -16,3 +17,8 @@ vsc-extension-quickstart.md
 **/*.map
 **/*.ts
 **/.DS_Store
+
+# Keep the bundled wasm-pack output (out/wasm/coderef_core_wasm.js +
+# .wasm + .d.ts) inside the VSIX — wasmEngine.ts loads from there
+# when the extension is installed from the marketplace.
+!out/wasm/**
