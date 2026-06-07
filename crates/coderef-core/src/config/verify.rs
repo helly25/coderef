@@ -4,11 +4,13 @@
 //! `VerifyToggle` object. v0.1 honours `enabled`; richer fields exist
 //! for forward compatibility.
 
+#[cfg(feature = "schemars")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Per-pattern verify configuration.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(JsonSchema))]
 #[serde(untagged)]
 pub enum VerifyToggle {
     /// `"verify": true` / `"verify": false`.
@@ -21,7 +23,8 @@ pub enum VerifyToggle {
 }
 
 /// Structured verify configuration (the non-boolean shape).
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(JsonSchema))]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct VerifyOptions {
     /// Whether verification runs at all. `None` means inherit defaults.
