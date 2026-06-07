@@ -183,7 +183,9 @@ jobs:
           # Tiny end-to-end script: load the wasm-pack output, run each
           # exported function on representative input, and assert the
           # results match what the host-triple tests already proved.
-          cat > /tmp/wasm-smoke.cjs <<'EOF'
+          # The script lives in $GITHUB_WORKSPACE so the relative
+          # require() to the wasm-pack output dir resolves correctly.
+          cat > "$GITHUB_WORKSPACE/wasm-smoke.cjs" <<'EOF'
           const m = require('./crates/coderef-core-wasm/pkg/coderef_core_wasm.js');
 
           // 1. version()
@@ -233,7 +235,8 @@ jobs:
           }
           console.log('doctor_static: ok (errors=' + report.errors + ')');
           EOF
-          node /tmp/wasm-smoke.cjs
+          (cd "$GITHUB_WORKSPACE" && node ./wasm-smoke.cjs)
+          rm -f "$GITHUB_WORKSPACE/wasm-smoke.cjs"
 
       - name: WASM package size budget (< 1 MB)
         run: |
