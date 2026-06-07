@@ -29,10 +29,10 @@ serde-wasm-bindgen = "0.6"
 # `wasm-pack` + node smoke in CI (see .github/workflows/ci.yml).
 wasm-bindgen-test = "0.3"
 
-# wasm-pack-specific metadata. wasm-opt is disabled because the version
-# wasm-pack bundles (binaryen ~119) doesn't enable bulk-memory ops by
-# default, which the bulk-memory instructions emitted by recent rustc
-# require. Re-enable once wasm-pack ships a newer binaryen, or pass
-# `--enable-bulk-memory` via a wasm-opt config block.
+# wasm-pack-specific metadata. wasm-opt with bulk-memory enabled — the
+# bundled binaryen rejects rustc's memory.fill / memory.copy emissions
+# at default settings; the feature flag opts into the proposal. Without
+# this opt, the unstripped WASM weighs in around 1.7 MB; with it,
+# under 300 KB.
 [package.metadata.wasm-pack.profile.release]
-wasm-opt = false
+wasm-opt = ["-O", "--enable-bulk-memory"]
