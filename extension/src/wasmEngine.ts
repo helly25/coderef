@@ -56,14 +56,23 @@ interface WasmModule {
 let cached: WasmModule | null = null;
 let loadError: Error | null = null;
 
-/** Resolve and require the wasm-pack output. Cached after first call. */
+/** Resolve and require the wasm-pack output. Cached after first call.
+ *
+ *  Tried paths, in order:
+ *  1. `extension/out/wasm/coderef_core_wasm` — the bundled location
+ *     when the extension was installed from a VSIX. `scripts/
+ *     bundle-wasm.cjs` puts the wasm-pack output here as part of
+ *     `npm run build` / `vscode:prepublish`.
+ *  2. `<repo>/crates/coderef-core-wasm/pkg/coderef_core_wasm` —
+ *     the dev location when the extension is being run from a repo
+ *     checkout (e.g. via F5 in the Extension Host).
+ */
 function loadModule(): WasmModule {
   if (cached) return cached;
   if (loadError) throw loadError;
-  // Compiled location is extension/out/wasmEngine.js, so:
-  //   __dirname = .../extension/out
-  //   pkg       = ../../crates/coderef-core-wasm/pkg/coderef_core_wasm
-  const pkgPath = path.resolve(
+  // __dirname = .../extension/out (after compile)
+  const bundled = path.join(__dirname, "wasm", "coderef_core_wasm");
+  const dev = path.resolve(
     __dirname,
     "..",
     "..",
@@ -72,18 +81,25 @@ function loadModule(): WasmModule {
     "pkg",
     "coderef_core_wasm",
   );
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    cached = require(pkgPath) as WasmModule;
-    return cached;
-  } catch (err) {
-    loadError = err as Error;
-    throw new Error(
-      `coderef: failed to load WASM engine from ${pkgPath} (${loadError.message}). ` +
-        `Run \`wasm-pack build --target nodejs --out-dir pkg crates/coderef-core-wasm\` ` +
-        `from the repo root.`,
-    );
+  const tries: string[] = [bundled, dev];
+  const errors: string[] = [];
+  for (const candidate of tries) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      cached = require(candidate) as WasmModule;
+      return cached;
+    } catch (err) {
+      errors.push(`${candidate}: ${(err as Error).message}`);
+    }
   }
+  loadError = new Error(
+    "coderef: failed to load WASM engine from any of:\n  " +
+      errors.join("\n  ") +
+      "\nRun `npm run build` from the extension directory (or " +
+      "`wasm-pack build --target nodejs --out-dir pkg crates/coderef-core-wasm` " +
+      "from the repo root).",
+  );
+  throw loadError;
 }
 
 export function engineVersion(): string {
