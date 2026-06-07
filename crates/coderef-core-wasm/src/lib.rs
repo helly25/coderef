@@ -16,10 +16,10 @@
 
 use coderef_core::comment::language_for_extension;
 use coderef_core::config::Config;
-use coderef_core::doctor::{DoctorReport, run_doctor};
+use coderef_core::doctor::{run_doctor, DoctorReport};
 use coderef_core::pattern::CompiledPattern;
 use coderef_core::reference::Reference;
-use coderef_core::scan::{ScanOptions, scan_file};
+use coderef_core::scan::{scan_file, ScanOptions};
 use coderef_core::variables::Context;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
