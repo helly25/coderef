@@ -1,10 +1,34 @@
 #!/usr/bin/env node
-// Placeholder bin shim. Will exec the platform-native `coderef` binary
-// downloaded by ./install.js when the workspace ships its first feature.
-// At v0.0.0 there is no real binary yet; we just report status.
+// Wrapper around the platform-native `coderef` binary placed here by
+// install.js. Forwards every argument verbatim and propagates the
+// exit status so callers (pre-commit hooks, CI scripts, shells) see
+// identical behaviour to invoking the binary directly.
 
-console.error(
-  "coderef: no native binary installed yet (v0.0.0 scaffold). " +
-    "Track v0.1 progress at https://github.com/helly25/coderef.",
+"use strict";
+
+const path = require("node:path");
+const fs = require("node:fs");
+const { spawnSync } = require("node:child_process");
+
+const HERE = __dirname;
+const BIN = path.join(
+  HERE,
+  process.platform === "win32" ? "coderef.exe" : "coderef",
 );
-process.exit(127);
+
+if (!fs.existsSync(BIN)) {
+  console.error(
+    "coderef: binary not found at " + BIN + "\n" +
+      "The npm postinstall (install.js) didn't manage to place one. " +
+      "Re-run `npm install` for this package, or set CODEREF_BINARY_PATH " +
+      "to an existing coderef binary.",
+  );
+  process.exit(127);
+}
+
+const r = spawnSync(BIN, process.argv.slice(2), { stdio: "inherit" });
+if (r.error) {
+  console.error("coderef: failed to spawn binary:", r.error.message);
+  process.exit(127);
+}
+process.exit(r.status ?? 1);

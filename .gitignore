@@ -22,6 +22,12 @@ coverage/
 .coderef-cache/
 .coderef/
 
+# npm wrapper: postinstall drops the platform binary here.
+# bin/coderef.js is the launcher and is tracked; bin/coderef[.exe] is
+# the installed artifact and is not.
+npm/coderef/bin/coderef
+npm/coderef/bin/coderef.exe
+
 # OS
 .DS_Store
 Thumbs.db
