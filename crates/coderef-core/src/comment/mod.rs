@@ -25,6 +25,7 @@
 
 mod detector;
 mod languages;
+mod markdown;
 
 pub use self::detector::{detect_comment_ranges, is_in_any_range, Range};
 pub use self::languages::{language_for_extension, Language};
