@@ -17,11 +17,35 @@ import * as path from "node:path";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
+/** Engine-side `Pattern`. The extension reads only the fields surfaced
+ *  in hover / link UI; everything else passes through opaquely on the
+ *  way back to scan_buffer. */
+export interface EnginePattern {
+  description?: string;
+  kind?: "url" | "local" | "ifchange" | "command";
+  regex: string;
+  target?: string;
+  title?: string;
+  // Other fields (scope, severity, resolve, …) are accepted by the
+  // engine but not read here. Allow them via index signature so the
+  // round-trip JSON.stringify preserves them.
+  [key: string]: unknown;
+}
+
 /** Engine-side `Config` returned by `parse_config`. */
 export interface EngineConfig {
-  patterns: Record<string, unknown>;
+  patterns: Record<string, EnginePattern>;
   variables?: Record<string, unknown>;
   ignore?: string[];
+  [key: string]: unknown;
+}
+
+/** Look up a pattern in a config by id, or undefined if absent. */
+export function patternFor(
+  config: EngineConfig | undefined,
+  patternId: string,
+): EnginePattern | undefined {
+  return config?.patterns?.[patternId];
 }
 
 /** Engine-side `Reference` returned by `scan_buffer`. */

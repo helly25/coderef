@@ -53,7 +53,7 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.languages.registerHoverProvider(
       { scheme: "file" },
-      new CoderefHoverProvider(cache),
+      new CoderefHoverProvider(cache, () => currentConfig),
     ),
   );
 

@@ -4,15 +4,20 @@
 //                          URL kind → opens the resolved target.
 //                          Local kind → opens the resolved path under
 //                                       the workspace root.
-//   HoverProvider        — shows the pattern id, resolved title (if any),
-//                          and target on hover.
+//   HoverProvider        — shows the pattern id, description from the
+//                          config (if any), resolved title (if any),
+//                          and target on hover. The description lookup
+//                          gives the hover its "what is this pattern
+//                          for" answer without the reader having to
+//                          open .coderef.jsonc.
 
 import * as path from "node:path";
 
 import * as vscode from "vscode";
 
+import { type LoadedConfig } from "./configLoader";
 import { type ReferenceCache } from "./referenceCache";
-import { type EngineReference } from "./wasmEngine";
+import { type EngineReference, patternFor } from "./wasmEngine";
 
 export class CoderefDocumentLinkProvider implements vscode.DocumentLinkProvider {
   constructor(private readonly cache: ReferenceCache) {}
@@ -27,7 +32,12 @@ export class CoderefDocumentLinkProvider implements vscode.DocumentLinkProvider 
 }
 
 export class CoderefHoverProvider implements vscode.HoverProvider {
-  constructor(private readonly cache: ReferenceCache) {}
+  constructor(
+    private readonly cache: ReferenceCache,
+    /** Resolves to the currently-loaded config, so the hover can look
+     *  up the pattern description by id without re-parsing. */
+    private readonly getConfig: () => LoadedConfig | undefined,
+  ) {}
 
   provideHover(
     document: vscode.TextDocument,
@@ -42,12 +52,9 @@ export class CoderefHoverProvider implements vscode.HoverProvider {
     if (!r) {
       return undefined;
     }
-    const md = new vscode.MarkdownString();
-    md.appendMarkdown(`**coderef** &nbsp; \`${r.pattern_id}\` (${r.pattern_kind})\n\n`);
-    if (r.title) {
-      md.appendMarkdown(`${escapeMarkdown(r.title)}\n\n`);
-    }
-    md.appendMarkdown(`→ [${escapeMarkdown(r.target)}](${linkTargetFor(document, r)})`);
+    const cfg = this.getConfig();
+    const pattern = patternFor(cfg?.config, r.pattern_id);
+    const md = buildHoverMarkdown(r, pattern?.description, linkTargetFor(document, r));
     return new vscode.Hover(
       md,
       new vscode.Range(
@@ -56,6 +63,25 @@ export class CoderefHoverProvider implements vscode.HoverProvider {
       ),
     );
   }
+}
+
+/** Build the markdown content for a hover popover. Pure function so
+ *  it's testable without a real VSCode runtime. */
+export function buildHoverMarkdown(
+  r: EngineReference,
+  description: string | undefined,
+  linkTarget: vscode.Uri,
+): vscode.MarkdownString {
+  const md = new vscode.MarkdownString();
+  md.appendMarkdown(`**coderef** &nbsp; \`${r.pattern_id}\` (${r.pattern_kind})\n\n`);
+  if (description) {
+    md.appendMarkdown(`${escapeMarkdown(description)}\n\n`);
+  }
+  if (r.title) {
+    md.appendMarkdown(`${escapeMarkdown(r.title)}\n\n`);
+  }
+  md.appendMarkdown(`→ [${escapeMarkdown(r.target)}](${linkTarget})`);
+  return md;
 }
 
 /** Build a VSCode `DocumentLink` for the given engine reference. */
