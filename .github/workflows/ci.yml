@@ -333,6 +333,13 @@ jobs:
         working-directory: extension
         run: npm test
 
+      - name: Runtime tests (@vscode/test-electron in a real VSCode)
+        working-directory: extension
+        # @vscode/test-cli launches a real VSCode binary; on the
+        # ubuntu-latest runner that needs Xvfb because GitHub's image
+        # is headless.
+        run: xvfb-run -a npm run test-runtime
+
       - name: Build (compile + bundle-wasm) and package VSIX
         working-directory: extension
         run: npm run package

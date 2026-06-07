@@ -1,0 +1,15 @@
+// Fixture workspace for @vscode/test-electron runtime tests. The
+// patterns here mirror the project root's .coderef.jsonc closely
+// enough for the runtime tests to assert behaviour identical to
+// what a real consumer would experience.
+{
+  "patterns": {
+    "todo-user": {
+      "description": "GitHub @user mention inside a TODO marker.",
+      "regex":  "TODO\\(@(?<user>[a-zA-Z][\\w.-]{0,38})\\)",
+      "target": "https://github.com/${user}",
+      "title":  "GitHub profile: ${user}",
+      "scope":  { "commentsOnly": true }
+    }
+  }
+}
