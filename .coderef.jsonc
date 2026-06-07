@@ -1,15 +1,17 @@
 // coderef's own config — used to dogfood the engine against this repo.
 //
-// The patterns here are minimal-but-real:
+// Patterns:
+//   - todo-user:  TODO(@user) → https://github.com/{user}
+//   - docref:     DOCREF(/path) → workspace-relative file
 //
-//   - todo-user:  TODO(@user) in comments resolves to GitHub user pages.
-//                 Will fire on any TODO(@<github-username>) we ever add.
-//   - docref:     DOCREF(/path) in comments resolves to a workspace-
-//                 relative file. Used to keep markdown / config / doc
-//                 cross-references live as the repo moves around.
+// Both are `commentsOnly: true`. Under v0.2 region-classification
+// (PR #10), that includes refs inside comments, markdown code blocks,
+// and string literals — see DESIGN.md §5.4.1.
 //
-// Both patterns are `commentsOnly: true` so a TODO/DOCREF inside a
-// string literal isn't picked up.
+// Per-pattern `scope.exclude` skips files that contain *illustrative*
+// references (design docs that show DOCREF syntax in code examples,
+// test fixtures that intentionally include matching strings). The
+// rest of the repo is scanned normally.
 {
   "$schema": "./schema/coderef.schema.json",
   "ignore": [
@@ -24,14 +26,34 @@
       "regex":  "TODO\\(@(?<user>[a-zA-Z][\\w.-]{0,38})\\)",
       "target": "https://github.com/${user}",
       "title":  "GitHub profile: ${user}",
-      "scope":  { "commentsOnly": true }
+      "scope":  {
+        "commentsOnly": true,
+        // Design docs include `TODO(@marcus.boerger)`-style illustrative
+        // refs that hit GitHub's 406 on HEAD; the design isn't a list
+        // of live TODOs.
+        "exclude": ["DESIGN.md", "RESEARCH.md", "docs/**"]
+      }
     },
     "docref": {
       "regex":  "DOCREF\\((?<path>/?[^)\\s#]+)\\)",
       "kind":   "local",
       "target": "${path}",
       "title":  "Document: ${path}",
-      "scope":  { "commentsOnly": true }
+      "scope":  {
+        "commentsOnly": true,
+        // The repo's documentation, README, and Rust test fixtures
+        // include illustrative DOCREF examples (e.g. `DOCREF(/docs/x.md)`
+        // shown in a code block, or a fixture string containing the
+        // literal text). Those aren't real cross-references; skip them.
+        "exclude": [
+          "DESIGN.md",
+          "RESEARCH.md",
+          "README.md",
+          "docs/**",
+          "crates/coderef-core/src/comment/markdown.rs",
+          "crates/coderef-core/tests/check_pipeline.rs"
+        ]
+      }
     }
   }
 }

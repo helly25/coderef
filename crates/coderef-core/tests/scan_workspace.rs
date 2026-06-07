@@ -53,10 +53,13 @@ const CONFIG: &str = r#"
 #[test]
 fn integration_scan_finds_refs_across_languages_with_comments_only_filtering() {
     let root = tmpdir("multilang");
-    // Code in comment (should match).
+    // Reference in a line comment (always matches under commentsOnly).
     write(&root, "src/a.rs", "fn x() { // TODO(@alice)\n}");
     write(&root, "src/b.py", "x = 1  # TODO(@bob)");
-    // TODO inside string literal: should NOT match because commentsOnly.
+    // v0.2 change: a TODO inside a string literal IS picked up under
+    // commentsOnly because StringLiteral is comment-like. The two refs
+    // in c.rs both survive — `@code` (string fixture) and `@cdoc` (//
+    // comment).
     write(
         &root,
         "src/c.rs",
@@ -79,32 +82,30 @@ fn integration_scan_finds_refs_across_languages_with_comments_only_filtering() {
         .map(|r| (r.file.clone(), r.pattern_id.clone(), r.target.clone()))
         .collect();
 
-    // Comparing as sets is brittle on output order; the scanner is
-    // deterministic — so compare the exact ordered list.
     let expected: Vec<(String, String, String)> = vec![
-        // a.rs has one TODO in a //-comment.
         (
             "src/a.rs".into(),
             "todo-user".into(),
             "https://users.example.com/alice".into(),
         ),
-        // b.py has one TODO after #.
         (
             "src/b.py".into(),
             "todo-user".into(),
             "https://users.example.com/bob".into(),
         ),
-        // c.rs: TODO in string filtered out; TODO in //-comment kept.
+        // c.rs: both TODOs survive under v0.2 commentsOnly — the
+        // string-fixture one (`@code`) classifies as StringLiteral,
+        // the //-comment one as LineComment.
+        (
+            "src/c.rs".into(),
+            "todo-user".into(),
+            "https://users.example.com/code".into(),
+        ),
         (
             "src/c.rs".into(),
             "todo-user".into(),
             "https://users.example.com/cdoc".into(),
         ),
-        // d.go: JIRA pattern has no scope filter; the JIRA inside the
-        // string also matches. (JIRA's regex requires uppercase letters
-        // before `-` so "NOMATCH-1" passes the regex but the second
-        // occurrence has a different ticket id.) The Go file has two
-        // matches in declaration order (the comment then the string).
         (
             "src/d.go".into(),
             "jira".into(),

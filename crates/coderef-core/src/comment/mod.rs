@@ -26,6 +26,8 @@
 mod detector;
 mod languages;
 mod markdown;
+mod region;
 
-pub use self::detector::{detect_comment_ranges, is_in_any_range, Range};
+pub use self::detector::{detect_regions, is_in_any_range, Range};
 pub use self::languages::{language_for_extension, Language};
+pub use self::region::{is_in_comment_like, region_kind_at, ClassifiedRange, RegionKind};

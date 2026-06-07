@@ -29,34 +29,51 @@
 //! good enough for the `scope.commentsOnly` use case.
 
 use super::detector::Range;
+use super::region::{ClassifiedRange, RegionKind};
 
-/// Detect comment regions in a markdown buffer.
-pub fn detect_markdown_comment_ranges(content: &str) -> Vec<Range> {
+/// Detect classified regions in a markdown buffer.
+///
+/// v0.2 emits three kinds:
+///   - `BlockComment` for `<!-- ... -->` outside protected regions
+///   - `CodeSnippet`  for fenced ` ```...``` ` / `~~~...~~~` blocks
+///   - `CodeSnippet`  for inline backtick spans (`` `code` ``)
+///
+/// All three are comment-like under `commentsOnly: true` per
+/// `RegionKind::is_comment_like`. A reference inside a markdown code
+/// block (or HTML comment) is therefore picked up by patterns scoped
+/// to comments — see `DESIGN.md` §5.4.1 v0.2 notes.
+pub fn detect_markdown_regions(content: &str) -> Vec<ClassifiedRange> {
     let bytes = content.as_bytes();
-    let mut ranges = Vec::new();
+    let mut regions: Vec<ClassifiedRange> = Vec::new();
     let mut i = 0;
     let len = bytes.len();
 
     while i < len {
         // Fenced code block? Only at the start of a line (after optional
-        // whitespace, per CommonMark spec — we accept any whitespace
-        // leading on the same line that the fence starts).
+        // whitespace, per CommonMark spec).
         if at_line_start(bytes, i) {
             if let Some((fence_char, count, fence_open_end)) = match_fence_open(bytes, i) {
-                // Range covers from the fence's first char through (and
-                // including) the closing fence line — or to EOF if
-                // unterminated.
+                let start = i;
                 let end = find_fence_close(bytes, fence_open_end, fence_char, count).unwrap_or(len);
+                regions.push(ClassifiedRange {
+                    range: Range { start, end },
+                    kind: RegionKind::CodeSnippet,
+                });
                 i = end;
                 continue;
             }
         }
 
-        // Inline code span? Any run of N backticks (N >= 1) on a line.
+        // Inline code span? Any run of N backticks (N >= 1).
         if bytes[i] == b'`' {
+            let start = i;
             let run = count_backticks(bytes, i);
-            let close = find_inline_code_close(bytes, i + run, run).unwrap_or(len);
-            i = close;
+            let end = find_inline_code_close(bytes, i + run, run).unwrap_or(len);
+            regions.push(ClassifiedRange {
+                range: Range { start, end },
+                kind: RegionKind::CodeSnippet,
+            });
+            i = end;
             continue;
         }
 
@@ -65,9 +82,12 @@ pub fn detect_markdown_comment_ranges(content: &str) -> Vec<Range> {
             let start = i;
             let body_start = i + 4;
             let body_end = find_subsequence(bytes, b"-->", body_start).map_or(len, |pos| pos + 3);
-            ranges.push(Range {
-                start,
-                end: body_end,
+            regions.push(ClassifiedRange {
+                range: Range {
+                    start,
+                    end: body_end,
+                },
+                kind: RegionKind::BlockComment,
             });
             i = body_end;
             continue;
@@ -75,7 +95,7 @@ pub fn detect_markdown_comment_ranges(content: &str) -> Vec<Range> {
 
         i += utf8_char_len(bytes[i]);
     }
-    ranges
+    regions
 }
 
 /// Returns true if the byte index `at` is at the start of a line
@@ -227,126 +247,175 @@ const fn utf8_char_len(first_byte: u8) -> usize {
 mod tests {
     use super::*;
 
-    fn slices<'a>(ranges: &[Range], content: &'a str) -> Vec<&'a str> {
-        ranges.iter().map(|r| &content[r.start..r.end]).collect()
+    fn slices<'a>(regions: &[ClassifiedRange], content: &'a str) -> Vec<&'a str> {
+        regions
+            .iter()
+            .map(|r| &content[r.range.start..r.range.end])
+            .collect()
+    }
+
+    fn kinds(regions: &[ClassifiedRange]) -> Vec<RegionKind> {
+        regions.iter().map(|r| r.kind).collect()
     }
 
     #[test]
-    fn test_markdown_html_block_comment_in_body_text_is_detected() {
+    fn test_markdown_html_block_comment_classified_as_block_comment() {
         let content = "# Title\n<!-- hidden -->\nbody";
-        let r = detect_markdown_comment_ranges(content);
+        let r = detect_markdown_regions(content);
         assert_eq!(slices(&r, content), vec!["<!-- hidden -->"]);
+        assert_eq!(kinds(&r), vec![RegionKind::BlockComment]);
     }
 
     #[test]
-    fn test_markdown_html_comment_inside_inline_code_is_not_detected() {
-        // The regression case from PR #7: a `<!--` literal inside an
-        // inline-code span must NOT be treated as a comment opener.
+    fn test_markdown_inline_code_classified_as_code_snippet() {
         let content = "Doc says `<!--` is the opener.";
-        let r = detect_markdown_comment_ranges(content);
-        assert!(r.is_empty(), "got: {:?}", slices(&r, content));
+        let r = detect_markdown_regions(content);
+        // v0.2: the inline `<!--` literal is now a CodeSnippet region,
+        // not a swallowed-and-dropped fragment.
+        assert_eq!(kinds(&r), vec![RegionKind::CodeSnippet]);
+        assert!(slices(&r, content)[0].contains("<!--"));
     }
 
     #[test]
-    fn test_markdown_html_comment_inside_fenced_code_block_is_not_detected() {
-        let content = "intro\n\n```\n<!-- this is example markup -->\n```\n\nbody";
-        let r = detect_markdown_comment_ranges(content);
-        assert!(r.is_empty(), "got: {:?}", slices(&r, content));
+    fn test_markdown_fenced_block_classified_as_code_snippet() {
+        let content = "intro\n\n```\n<!-- example -->\n```\n\nbody";
+        let r = detect_markdown_regions(content);
+        assert_eq!(kinds(&r), vec![RegionKind::CodeSnippet]);
+        assert!(slices(&r, content)[0].contains("<!-- example -->"));
     }
 
     #[test]
-    fn test_markdown_html_comment_outside_after_fenced_block_is_detected() {
+    fn test_markdown_fenced_block_then_real_html_comment_classified_separately() {
         let content = "```\n<!-- inside -->\n```\n<!-- real -->";
-        let r = detect_markdown_comment_ranges(content);
-        let s = slices(&r, content);
-        assert_eq!(s.len(), 1);
-        assert_eq!(s[0], "<!-- real -->");
+        let r = detect_markdown_regions(content);
+        assert_eq!(
+            kinds(&r),
+            vec![RegionKind::CodeSnippet, RegionKind::BlockComment]
+        );
+        assert_eq!(slices(&r, content)[1], "<!-- real -->");
     }
 
     #[test]
-    fn test_markdown_tilde_fenced_code_block_also_protects() {
+    fn test_markdown_tilde_fence_classified_as_code_snippet() {
         let content = "~~~\n<!-- escaped -->\n~~~\n<!-- real -->";
-        let r = detect_markdown_comment_ranges(content);
-        let s = slices(&r, content);
-        assert_eq!(s, vec!["<!-- real -->"]);
+        let r = detect_markdown_regions(content);
+        assert_eq!(
+            kinds(&r),
+            vec![RegionKind::CodeSnippet, RegionKind::BlockComment]
+        );
     }
 
     #[test]
-    fn test_markdown_fence_with_info_string_still_protects() {
+    fn test_markdown_fence_with_info_string_still_classified_as_code_snippet() {
         let content = "```html\n<!-- example -->\n```\n<!-- real -->";
-        let r = detect_markdown_comment_ranges(content);
-        let s = slices(&r, content);
-        assert_eq!(s, vec!["<!-- real -->"]);
+        let r = detect_markdown_regions(content);
+        assert_eq!(
+            kinds(&r),
+            vec![RegionKind::CodeSnippet, RegionKind::BlockComment]
+        );
     }
 
     #[test]
     fn test_markdown_longer_fence_can_be_closed_only_by_at_least_same_length() {
-        // 4 backticks opens; 3 backticks does NOT close.
         let content = "````\nbody with ``` inside\n````\n<!-- real -->";
-        let r = detect_markdown_comment_ranges(content);
-        assert_eq!(slices(&r, content), vec!["<!-- real -->"]);
+        let r = detect_markdown_regions(content);
+        assert_eq!(
+            kinds(&r),
+            vec![RegionKind::CodeSnippet, RegionKind::BlockComment]
+        );
+        assert_eq!(slices(&r, content)[1], "<!-- real -->");
     }
 
     #[test]
-    fn test_markdown_double_backtick_inline_code_protects_single_backticks_inside() {
-        // `` `code with literal backtick` `` — the outer `` opens an
-        // inline code span; the inner single backticks are literals.
+    fn test_markdown_double_backtick_inline_code_classified_as_code_snippet() {
         let content = "intro ``a `b` c`` <!-- real -->";
-        let r = detect_markdown_comment_ranges(content);
-        assert_eq!(slices(&r, content), vec!["<!-- real -->"]);
+        let r = detect_markdown_regions(content);
+        assert_eq!(
+            kinds(&r),
+            vec![RegionKind::CodeSnippet, RegionKind::BlockComment]
+        );
+        assert_eq!(slices(&r, content)[1], "<!-- real -->");
     }
 
     #[test]
     fn test_markdown_unterminated_block_comment_extends_to_eof() {
         let content = "lead\n<!-- never closes";
-        let r = detect_markdown_comment_ranges(content);
+        let r = detect_markdown_regions(content);
         assert_eq!(slices(&r, content), vec!["<!-- never closes"]);
+        assert_eq!(kinds(&r), vec![RegionKind::BlockComment]);
     }
 
     #[test]
-    fn test_markdown_unterminated_fence_protects_to_eof() {
+    fn test_markdown_unterminated_fence_classified_as_code_snippet_to_eof() {
         let content = "intro\n```\n<!-- still inside -->\nno close here";
-        let r = detect_markdown_comment_ranges(content);
-        assert!(r.is_empty(), "got: {:?}", slices(&r, content));
+        let r = detect_markdown_regions(content);
+        assert_eq!(kinds(&r), vec![RegionKind::CodeSnippet]);
     }
 
     #[test]
     fn test_markdown_leading_whitespace_before_fence_is_accepted() {
         let content = "intro\n  ```\n<!-- escaped -->\n  ```\n<!-- real -->";
-        let r = detect_markdown_comment_ranges(content);
-        assert_eq!(slices(&r, content), vec!["<!-- real -->"]);
+        let r = detect_markdown_regions(content);
+        assert_eq!(
+            kinds(&r),
+            vec![RegionKind::CodeSnippet, RegionKind::BlockComment]
+        );
     }
 
     #[test]
     fn test_markdown_multiple_html_comments_in_body() {
         let content = "<!-- one -->\nbody\n<!-- two -->";
-        let r = detect_markdown_comment_ranges(content);
+        let r = detect_markdown_regions(content);
         assert_eq!(slices(&r, content), vec!["<!-- one -->", "<!-- two -->"]);
+        assert_eq!(
+            kinds(&r),
+            vec![RegionKind::BlockComment, RegionKind::BlockComment]
+        );
     }
 
     #[test]
-    fn test_markdown_empty_input_yields_no_ranges() {
-        let r = detect_markdown_comment_ranges("");
+    fn test_markdown_empty_input_yields_no_regions() {
+        let r = detect_markdown_regions("");
         assert!(r.is_empty());
     }
 
-    // ---------- The DESIGN.md regression case ----------
+    // ---------- v0.2: code snippets carry references through ----------
 
     #[test]
-    fn test_markdown_designdotmd_class_case_does_not_swallow_body_after_backticks() {
-        // The pattern that caught the v0.1 bug: a `<!--` literal inside
-        // inline code (or otherwise text-like-but-protected) followed
-        // much later by a `-->` elsewhere. The v0.1 implementation
-        // would have flagged everything between as "in comment". The
-        // v0.2 implementation must not.
+    fn test_markdown_inline_code_with_reference_emits_one_code_snippet() {
+        // The change of intent from PR #9 to this one: the inline code
+        // containing JIRA(PROJ-1) is now a CodeSnippet region. Under
+        // `commentsOnly: true` it's comment-like and the JIRA matches
+        // inside survive the scope filter.
+        let content = "See `JIRA(PROJ-1)` for context.";
+        let r = detect_markdown_regions(content);
+        assert_eq!(kinds(&r), vec![RegionKind::CodeSnippet]);
+        let s = slices(&r, content)[0];
+        assert!(s.contains("JIRA(PROJ-1)"), "got: {s}");
+    }
+
+    #[test]
+    fn test_markdown_designdotmd_class_case_emits_each_region_correctly() {
+        // PR #9's "doesn't swallow body" test, updated for v0.2: the
+        // inline `<!--` and `-->` are each their own CodeSnippet
+        // regions. The DOCREF in body text isn't in any region.
         let content = "\
 The HTML opener `<!--` is shown above.
 
 Later text discussing `-->` in passing.
 
-DOCREF(/docs/foo) should NOT be flagged as in-comment.
+DOCREF(/docs/foo) is body text.
 ";
-        let r = detect_markdown_comment_ranges(content);
-        assert!(r.is_empty(), "got: {:?}", slices(&r, content));
+        let r = detect_markdown_regions(content);
+        assert_eq!(
+            kinds(&r),
+            vec![RegionKind::CodeSnippet, RegionKind::CodeSnippet]
+        );
+        // The DOCREF byte offset is OUTSIDE every emitted region.
+        let docref_offset = content.find("DOCREF").unwrap();
+        assert!(
+            !r.iter().any(|cr| cr.range.contains(docref_offset)),
+            "DOCREF should be in body text, not in any region"
+        );
     }
 }
