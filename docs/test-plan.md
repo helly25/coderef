@@ -36,33 +36,42 @@ below.
 
 ---
 
-## VSCode extension end-to-end (DocumentLink + Hover under Extension Host)
+## VSCode extension end-to-end (closed — codified)
 
-- **What was verified**: with the v0.1 extension PR, that activating
-  the extension in a workspace containing a `.coderef.jsonc` results
-  in references being clickable (DocumentLink) and producing a hover
-  tooltip (Hover) on every match. Both URL and local-path kinds were
-  verified manually by spawning the Extension Host (`F5` in the dev
-  workspace), opening a test file with planted `TODO(@user)` and
-  `DOCREF(/docs/x.md)` markers, and observing the link decoration +
-  hover popup.
-- **How it was verified**: manual smoke test, one-shot. The unit
-  tests in `extension/src/providers.test.ts` cover `linkTargetFor`
-  (the pure URL/local resolution function) via a mocked `vscode`
-  module, and the WASM smoke in CI covers the engine. What is *not*
-  covered by code yet: the actual VSCode runtime wiring — provider
-  registration, document open/change cache invalidation, config-file
-  watcher, error paths when the WASM engine fails to load.
-- **What test should replace this note**: an `@vscode/test-electron`
-  integration test that:
-    1. Boots a real VSCode instance pointed at a fixture workspace.
-    2. Waits for the extension to activate.
-    3. Opens a fixture document, queries
-       `vscode.commands.executeCommand('vscode.executeLinkProvider', uri)`
-       and asserts the returned links match the planted refs.
-    4. Queries `vscode.executeHoverProvider` and asserts the hover
-       contains the pattern id + target.
-- **Tracked**: extension PR + a follow-up issue
-  `extension: wire @vscode/test-electron for runtime integration tests`.
+- **What was verified**: extension activates in a workspace
+  containing `.coderef.jsonc`; DocumentLinks resolve for planted
+  TODO(@user) markers; hover returns content with pattern id +
+  description; `coderef.explainReference` is registered.
+- **Replaced by**: `extension/src/test/runtime/extension.test.ts`,
+  run via `@vscode/test-electron` (script: `npm run test-runtime`).
+  CI runs the same path in the `VSCode extension (TS + VSIX)` job.
+- **Tracked**: closed by the PR adding `@vscode/test-electron`.
+
+---
+
+## UTF-16 vs UTF-8 offset mismatch in providers.ts
+
+- **What was verified**: surfaced by writing the runtime tests for
+  the above entry — the hover provider's position-vs-ref-byte-range
+  comparison uses `document.offsetAt()` (UTF-16 code units on
+  VSCode's side) against the engine's `byte_start` (UTF-8 bytes).
+  For ASCII-only content they coincide; non-ASCII characters
+  earlier in the file shift the byte offset relative to UTF-16,
+  causing hover lookups to miss.
+- **How it was verified**: runtime test failed when the fixture
+  contained an em-dash; passed when the fixture was made
+  ASCII-only. The DocumentLinkProvider has the same shape
+  (`document.positionAt(r.byte_start)`); links are still drawn but
+  the position is off by N (where N is the count of multi-byte
+  characters before the ref). User would see clickable links
+  shifted from the actual text on documents containing emoji /
+  diacritics / Asian scripts / etc.
+- **What test should replace this note**: a unit test on a small
+  conversion helper (`byteOffsetToVscodePosition(doc, byteOffset)`
+  and the inverse) using a fixture document with multi-byte
+  characters before known reference positions. Plus updating the
+  runtime fixture to include non-ASCII and asserting hover still
+  resolves.
+- **Tracked**: follow-up PR.
 
 ---
