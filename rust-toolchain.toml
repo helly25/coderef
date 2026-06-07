@@ -1,4 +1,22 @@
 [toolchain]
 channel    = "1.90"
 components = ["rustfmt", "clippy"]
+targets    = ["wasm32-unknown-unknown"]
 profile    = "minimal"
+
+# Why declare wasm32-unknown-unknown here even though only the
+# `coderef-core-wasm` crate uses it?
+#
+#   - This file is rustup's contract: any rustup-managed environment
+#     auto-installs the declared targets when cargo first touches the
+#     repo. CI honours this; contributors with rustup do too.
+#   - Anyone WITHOUT rustup (e.g. plain Homebrew Rust) won't be able
+#     to build the WASM crate — the compat probe in
+#     `extension/scripts/bundle-wasm.cjs` catches that early with a
+#     clear actionable error rather than letting wasm-pack fail
+#     opaquely or, worse, succeeding after someone manually drops
+#     files into the Cellar.
+#
+# The pattern follows bazel-contrib/toolchains_llvm: declare what's
+# needed, then check at configure time. Don't silently mutate the
+# user's installation.
