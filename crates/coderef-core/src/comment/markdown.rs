@@ -33,12 +33,13 @@ use super::region::{ClassifiedRange, RegionKind};
 
 /// Detect classified regions in a markdown buffer.
 ///
-/// v0.2 emits three kinds:
+/// v0.2 emits four kinds:
 ///   - `BlockComment` for `<!-- ... -->` outside protected regions
 ///   - `CodeSnippet`  for fenced ` ```...``` ` / `~~~...~~~` blocks
 ///   - `CodeSnippet`  for inline backtick spans (`` `code` ``)
+///   - `CodeSnippet`  for indented (4-space / tab) code blocks
 ///
-/// All three are comment-like under `commentsOnly: true` per
+/// All four are comment-like under `commentsOnly: true` per
 /// `RegionKind::is_comment_like`. A reference inside a markdown code
 /// block (or HTML comment) is therefore picked up by patterns scoped
 /// to comments — see `DESIGN.md` §5.4.1 v0.2 notes.
@@ -95,7 +96,119 @@ pub fn detect_markdown_regions(content: &str) -> Vec<ClassifiedRange> {
 
         i += utf8_char_len(bytes[i]);
     }
+
+    // Second pass: indented code blocks. CommonMark rule — a block
+    // of one or more lines indented 4+ spaces (or a tab) that follows
+    // a blank line or the start of the document. Stops at the next
+    // non-blank non-indented line.
+    //
+    // Done in a second pass over the buffer that's already had
+    // fenced + inline + HTML-comment regions found, so we don't
+    // double-classify a line that's already inside one of those.
+    for r in detect_indented_code_regions(bytes, &regions) {
+        regions.push(r);
+    }
+    regions.sort_by_key(|r| r.range.start);
     regions
+}
+
+/// Walk `bytes` line by line; emit `CodeSnippet` ranges for indented
+/// (4+ space or tab-indented) code blocks that don't overlap any
+/// already-detected region.
+fn detect_indented_code_regions(
+    bytes: &[u8],
+    existing: &[ClassifiedRange],
+) -> Vec<ClassifiedRange> {
+    let mut out = Vec::new();
+    let mut prev_was_blank = true; // start-of-doc counts as blank
+    let mut line_start = 0;
+    let len = bytes.len();
+    while line_start < len {
+        let line_end = find_line_end(bytes, line_start);
+        let already_in_region = existing.iter().any(|r| r.range.contains(line_start));
+        if already_in_region {
+            prev_was_blank = false;
+            line_start = line_end;
+            continue;
+        }
+        let blank = is_blank_line(bytes, line_start, line_end);
+        if blank {
+            prev_was_blank = true;
+            line_start = line_end;
+            continue;
+        }
+        if prev_was_blank && is_indented_code_start(bytes, line_start) {
+            let block_start = line_start;
+            // Extend through subsequent indented OR blank lines, but
+            // trim trailing blank lines back (they're not part of
+            // the block per CommonMark).
+            let mut block_end = line_end;
+            let mut last_non_blank_end = line_end;
+            let mut scan = line_end;
+            while scan < len {
+                let nle = find_line_end(bytes, scan);
+                let nb = is_blank_line(bytes, scan, nle);
+                let in_existing = existing.iter().any(|r| r.range.contains(scan));
+                if in_existing {
+                    break;
+                }
+                if nb {
+                    scan = nle;
+                    block_end = scan;
+                    continue;
+                }
+                if is_indented_code_start(bytes, scan) {
+                    scan = nle;
+                    block_end = scan;
+                    last_non_blank_end = scan;
+                    continue;
+                }
+                break;
+            }
+            // Trim trailing blanks from the block_end.
+            let _ = block_end;
+            out.push(ClassifiedRange {
+                range: Range {
+                    start: block_start,
+                    end: last_non_blank_end,
+                },
+                kind: RegionKind::CodeSnippet,
+            });
+            line_start = last_non_blank_end;
+            prev_was_blank = false;
+            continue;
+        }
+        prev_was_blank = false;
+        line_start = line_end;
+    }
+    out
+}
+
+fn find_line_end(bytes: &[u8], from: usize) -> usize {
+    let nl = bytes[from..].iter().position(|b| *b == b'\n');
+    match nl {
+        Some(off) => from + off + 1, // consume newline as part of line
+        None => bytes.len(),
+    }
+}
+
+fn is_blank_line(bytes: &[u8], start: usize, end: usize) -> bool {
+    bytes[start..end]
+        .iter()
+        .all(|b| matches!(*b, b' ' | b'\t' | b'\r' | b'\n'))
+}
+
+/// True iff the line at `from` starts with at least 4 spaces or one
+/// tab (the `CommonMark` indentation that opens an indented code block).
+fn is_indented_code_start(bytes: &[u8], from: usize) -> bool {
+    if from >= bytes.len() {
+        return false;
+    }
+    if bytes[from] == b'\t' {
+        return true;
+    }
+    let take = bytes.len().min(from + 4);
+    bytes[from..take].iter().all(|b| *b == b' ') && take - from == 4
 }
 
 /// Returns true if the byte index `at` is at the start of a line
@@ -392,6 +505,78 @@ mod tests {
         assert_eq!(kinds(&r), vec![RegionKind::CodeSnippet]);
         let s = slices(&r, content)[0];
         assert!(s.contains("JIRA(PROJ-1)"), "got: {s}");
+    }
+
+    // ---------- Indented (4-space / tab) code blocks ----------
+
+    #[test]
+    fn test_markdown_indented_code_block_after_blank_line_classified_as_code_snippet() {
+        // Standard CommonMark: blank line, then 4-space-indented line opens
+        // an indented code block. Treat it as a CodeSnippet.
+        let content = "intro line\n\n    let x = TODO(@alice);\n\nbody";
+        let r = detect_markdown_regions(content);
+        assert_eq!(kinds(&r), vec![RegionKind::CodeSnippet]);
+        assert!(
+            slices(&r, content)[0].contains("TODO(@alice)"),
+            "got: {:?}",
+            slices(&r, content),
+        );
+    }
+
+    #[test]
+    fn test_markdown_indented_code_block_at_doc_start_is_recognised() {
+        // Document-start counts as 'after blank line' for the opener check.
+        let content = "    let x = 1;\n    let y = 2;\nbody";
+        let r = detect_markdown_regions(content);
+        assert_eq!(kinds(&r), vec![RegionKind::CodeSnippet]);
+    }
+
+    #[test]
+    fn test_markdown_indented_line_in_middle_of_paragraph_is_not_a_code_block() {
+        // CommonMark: a 4-space-indented line is NOT a code block if the
+        // previous line is non-blank (it's a paragraph continuation).
+        let content = "paragraph line 1\n    paragraph line 2 (visually indented)\n";
+        let r = detect_markdown_regions(content);
+        assert!(r.is_empty(), "got: {:?}", slices(&r, content));
+    }
+
+    #[test]
+    fn test_markdown_indented_code_block_extends_through_consecutive_indented_lines() {
+        let content = "intro\n\n    line A\n    line B\n    line C\n\nbody";
+        let r = detect_markdown_regions(content);
+        assert_eq!(kinds(&r), vec![RegionKind::CodeSnippet]);
+        let s = slices(&r, content)[0];
+        assert!(s.contains("line A"));
+        assert!(s.contains("line B"));
+        assert!(s.contains("line C"));
+    }
+
+    #[test]
+    fn test_markdown_tab_indented_line_after_blank_is_a_code_block() {
+        // A single tab is equivalent to 4 spaces for indented-block purposes.
+        let content = "intro\n\n\tlet x = TODO(@bob);\n\nbody";
+        let r = detect_markdown_regions(content);
+        assert_eq!(kinds(&r), vec![RegionKind::CodeSnippet]);
+        assert!(slices(&r, content)[0].contains("TODO(@bob)"));
+    }
+
+    #[test]
+    fn test_markdown_indented_block_followed_by_real_html_comment_emits_both() {
+        let content = "intro\n\n    let x = 1;\n\n<!-- real -->";
+        let r = detect_markdown_regions(content);
+        assert_eq!(
+            kinds(&r),
+            vec![RegionKind::CodeSnippet, RegionKind::BlockComment]
+        );
+    }
+
+    #[test]
+    fn test_markdown_indented_block_doesnt_re_emit_inside_fenced_block() {
+        // A fenced block whose body happens to be 4-space-indented should
+        // emit ONCE (as the fenced block, not also as an indented one).
+        let content = "intro\n\n```\n    indented inside fence\n```\n";
+        let r = detect_markdown_regions(content);
+        assert_eq!(kinds(&r), vec![RegionKind::CodeSnippet]);
     }
 
     #[test]
