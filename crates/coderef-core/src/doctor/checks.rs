@@ -9,6 +9,39 @@ use crate::config::{Config, Pattern};
 use crate::severity::Severity;
 use crate::variables::{parse_segments, Segment};
 
+/// Look up the effective severity for `check_id` on `p`. Returns the
+/// per-pattern override from `Pattern.severity` if set; otherwise the
+/// default supplied by the check site.
+pub(super) fn resolve_severity(p: &Pattern, check_id: &str, default: Severity) -> Severity {
+    p.severity.get(check_id).copied().unwrap_or(default)
+}
+
+/// Push a diagnostic, respecting the per-pattern `severity` override.
+/// A pattern that maps `check_id` → `Severity::Off` causes the check
+/// to skip emission entirely; everything else uses the resolved
+/// severity (override or default).
+fn push_diag(
+    out: &mut Vec<Diagnostic>,
+    p: &Pattern,
+    pattern_id: &str,
+    check_id: &'static str,
+    default_severity: Severity,
+    message: String,
+    hint: Option<String>,
+) {
+    let sev = resolve_severity(p, check_id, default_severity);
+    if sev == Severity::Off {
+        return;
+    }
+    out.push(Diagnostic {
+        check: check_id.into(),
+        severity: sev,
+        pattern_id: Some(pattern_id.into()),
+        message,
+        hint,
+    });
+}
+
 /// Run every per-pattern check, appending diagnostics in place.
 #[allow(clippy::too_many_lines)] // every check is small; one fn keeps the order obvious
 pub fn check_pattern(id: &str, p: &Pattern, cfg: &Config, out: &mut Vec<Diagnostic>) {
@@ -17,24 +50,26 @@ pub fn check_pattern(id: &str, p: &Pattern, cfg: &Config, out: &mut Vec<Diagnost
     let has_targets = !p.targets.is_empty();
     match (has_target, has_targets) {
         (false, false) => {
-            out.push(Diagnostic {
-                check: "pattern.targetMissing".into(),
-                severity: Severity::Error,
-                pattern_id: Some(id.into()),
-                message: format!("pattern `{id}` has neither `target` nor `targets[]`"),
-                hint: Some("set `target: \"...\"` (single) or `targets: [...]` (multi)".into()),
-            });
+            push_diag(
+                out,
+                p,
+                id,
+                "pattern.targetMissing",
+                Severity::Error,
+                format!("pattern `{id}` has neither `target` nor `targets[]`"),
+                Some("set `target: \"...\"` (single) or `targets: [...]` (multi)".into()),
+            );
         }
         (true, true) => {
-            out.push(Diagnostic {
-                check: "pattern.targetsBothFieldsSet".into(),
-                severity: Severity::Error,
-                pattern_id: Some(id.into()),
-                message: format!("pattern `{id}` declares both `target` and `targets[]`"),
-                hint: Some(
-                    "pick one form: drop `target` to use multi-target, or empty `targets`".into(),
-                ),
-            });
+            push_diag(
+                out,
+                p,
+                id,
+                "pattern.targetsBothFieldsSet",
+                Severity::Error,
+                format!("pattern `{id}` declares both `target` and `targets[]`"),
+                Some("pick one form: drop `target` to use multi-target, or empty `targets`".into()),
+            );
         }
         _ => {}
     }
@@ -43,14 +78,19 @@ pub fn check_pattern(id: &str, p: &Pattern, cfg: &Config, out: &mut Vec<Diagnost
     let compiled = match Regex::new(&p.regex) {
         Ok(r) => r,
         Err(e) => {
-            out.push(Diagnostic {
-                check: "pattern.regexInvalid".into(),
-                severity: Severity::Error,
-                pattern_id: Some(id.into()),
-                message: format!("pattern `{id}` has an invalid regex: {e}"),
-                hint: None,
-            });
-            return; // every subsequent check needs the compiled regex.
+            push_diag(
+                out,
+                p,
+                id,
+                "pattern.regexInvalid",
+                Severity::Error,
+                format!("pattern `{id}` has an invalid regex: {e}"),
+                None,
+            );
+            // Bail regardless of override: subsequent checks need a
+            // compiled regex. Disabling the diagnostic via severity:
+            // off doesn't change the fact we can't proceed.
+            return;
         }
     };
 
@@ -71,9 +111,6 @@ pub fn check_pattern(id: &str, p: &Pattern, cfg: &Config, out: &mut Vec<Diagnost
         templates.push(("title", t.as_str()));
     }
     for (i, t) in p.targets.iter().enumerate() {
-        // Borrow trick: rather than format!() the field label every
-        // iteration, fall back to a static label noting it's a targets
-        // entry. The pattern id + check id let the user find the row.
         let _ = i;
         templates.push(("targets[].url", t.url.as_str()));
     }
@@ -82,15 +119,15 @@ pub fn check_pattern(id: &str, p: &Pattern, cfg: &Config, out: &mut Vec<Diagnost
         let segments = match parse_segments(template) {
             Ok(s) => s,
             Err(e) => {
-                out.push(Diagnostic {
-                    check: "variable.invalidSyntax".into(),
-                    severity: Severity::Error,
-                    pattern_id: Some(id.into()),
-                    message: format!(
-                        "pattern `{id}` field `{field}` has invalid `${{...}}` syntax: {e}"
-                    ),
-                    hint: None,
-                });
+                push_diag(
+                    out,
+                    p,
+                    id,
+                    "variable.invalidSyntax",
+                    Severity::Error,
+                    format!("pattern `{id}` field `{field}` has invalid `${{...}}` syntax: {e}"),
+                    None,
+                );
                 continue;
             }
         };
@@ -105,62 +142,65 @@ pub fn check_pattern(id: &str, p: &Pattern, cfg: &Config, out: &mut Vec<Diagnost
                     if regex_caps.contains(&name) {
                         referenced_captures.insert(name);
                     }
-                    // Else: assume builtin / left for runtime. v0.2
-                    // doctor will validate against a known-builtins
-                    // table.
                 }
                 Some("capture") => {
                     if regex_caps.contains(&name) {
                         referenced_captures.insert(name);
                     } else {
-                        out.push(Diagnostic {
-                            check: "pattern.captureUnknown".into(),
-                            severity: Severity::Error,
-                            pattern_id: Some(id.into()),
-                            message: format!(
+                        push_diag(
+                            out,
+                            p,
+                            id,
+                            "pattern.captureUnknown",
+                            Severity::Error,
+                            format!(
                                 "pattern `{id}` field `{field}` references `${{capture:{name}}}` \
                                  but the regex has no such named capture"
                             ),
-                            hint: Some(format!(
+                            Some(format!(
                                 "either add `(?<{name}>...)` to the regex, or fix the template to \
                                  reference an existing capture: {}",
                                 regex_caps.iter().cloned().collect::<Vec<_>>().join(", ")
                             )),
-                        });
+                        );
                     }
                 }
                 Some("config") => {
                     if !cfg.variables.contains_key(&name) {
-                        out.push(Diagnostic {
-                            check: "pattern.variableConfigUnknown".into(),
-                            severity: Severity::Error,
-                            pattern_id: Some(id.into()),
-                            message: format!(
+                        push_diag(
+                            out,
+                            p,
+                            id,
+                            "pattern.variableConfigUnknown",
+                            Severity::Error,
+                            format!(
                                 "pattern `{id}` field `{field}` references `${{config:{name}}}` \
                                  but the config has no such variable"
                             ),
-                            hint: Some(format!(
+                            Some(format!(
                                 "add `variables.{name}` to the config, or fix the template"
                             )),
-                        });
+                        );
                     }
                 }
                 Some("git" | "blame") => {
                     let ns = namespace.as_deref().unwrap_or("");
                     let expected_version = if ns == "blame" { "v0.3" } else { "v0.2" };
-                    out.push(Diagnostic {
-                        check: "pattern.variableNamespaceFuture".into(),
-                        severity: Severity::Warning,
-                        pattern_id: Some(id.into()),
-                        message: format!(
+                    push_diag(
+                        out,
+                        p,
+                        id,
+                        "pattern.variableNamespaceFuture",
+                        Severity::Warning,
+                        format!(
                             "pattern `{id}` field `{field}` references `${{{ns}:{name}}}` — \
                              namespace `{ns}:` is not implemented in v0.1 (expected in \
                              {expected_version})"
                         ),
-                        hint: Some(format!(
+                        Some(format!(
                             "this pattern will fail at scan time until {expected_version}"
                         )),
-                    });
+                    );
                 }
                 Some(_) => {
                     // env, file, ref, ide — accepted at static time;
@@ -173,18 +213,20 @@ pub fn check_pattern(id: &str, p: &Pattern, cfg: &Config, out: &mut Vec<Diagnost
     // 4) captureUnused: any named capture that wasn't referenced.
     for cap in &regex_caps {
         if !referenced_captures.contains(cap) {
-            out.push(Diagnostic {
-                check: "pattern.captureUnused".into(),
-                severity: Severity::Warning,
-                pattern_id: Some(id.into()),
-                message: format!(
+            push_diag(
+                out,
+                p,
+                id,
+                "pattern.captureUnused",
+                Severity::Warning,
+                format!(
                     "pattern `{id}` captures `{cap}` but no template (target/title/targets[].url) \
                      references it"
                 ),
-                hint: Some(format!(
+                Some(format!(
                     "remove the capture group or reference it as `${{{cap}}}`"
                 )),
-            });
+            );
         }
     }
 }

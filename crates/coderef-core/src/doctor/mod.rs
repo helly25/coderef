@@ -149,12 +149,15 @@ pub fn run_doctor_with_workspace(
     let mut additions: Vec<Diagnostic> = Vec::new();
     for (id, pattern) in &scannable.patterns {
         if !counts_by_pattern.contains_key(id.as_str()) {
-            // Severity is `Info`, not `Warning`. A pattern that isn't
-            // used in this particular repo isn't a defect — shared and
-            // template configs (org-wide JIRA + LINEAR + GITHUB, etc.)
-            // routinely declare patterns that not every repo exercises.
-            // Strict users can escalate via per-pattern `scope.severity`
-            // overrides (DESIGN.md §5.4.3) once those wire through.
+            // Default severity is `Info` (shared / template configs
+            // declare patterns that don't apply to every repo, and
+            // that's not a defect). Per-pattern `severity` override
+            // lets a strict user escalate to Warning / Error or
+            // disable entirely with Off.
+            let sev = self::checks::resolve_severity(pattern, "pattern.unused", Severity::Info);
+            if sev == Severity::Off {
+                continue;
+            }
             // Multi-line message/hint: lines after the first are rendered
             // with a renderer-added indent (no leading whitespace in the
             // source). Doctor's text formatter handles alignment.
@@ -171,7 +174,7 @@ pub fn run_doctor_with_workspace(
             );
             additions.push(Diagnostic {
                 check: "pattern.unused".into(),
-                severity: Severity::Info,
+                severity: sev,
                 pattern_id: Some(id.clone()),
                 message,
                 hint: Some(
@@ -179,7 +182,8 @@ pub fn run_doctor_with_workspace(
                      otherwise:\n\
                        - remove the pattern,\n\
                        - tighten `scope.include` to a subtree where you expect matches, or\n\
-                       - escalate the severity in your local config to make the check fail."
+                       - escalate the severity in your local config (the `severity` field on \
+                     the pattern) to make the check fail."
                         .into(),
                 ),
             });
