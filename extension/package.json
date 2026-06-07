@@ -38,6 +38,11 @@
           "type": "boolean",
           "default": true,
           "description": "Master switch for the coderef extension."
+        },
+        "coderef.configPath": {
+          "type": "string",
+          "default": "",
+          "description": "Optional explicit path to the .coderef.jsonc, relative to the workspace root. Empty = auto-detect."
         }
       }
     }
@@ -46,6 +51,7 @@
     "compile": "tsc -p ./",
     "watch":   "tsc -watch -p ./",
     "lint":    "eslint src",
+    "test":    "node --test --import tsx src/providers.test.ts",
     "package": "vsce package",
     "publish": "vsce publish"
   },
@@ -58,6 +64,7 @@
     "@vscode/vsce":             "^3.9.1",
     "eslint":                   "^9.39.4",
     "globals":                  "^15.15.0",
+    "tsx":                      "^4.20.6",
     "typescript":               "^5.9.3",
     "typescript-eslint":        "^8.60.0"
   }
