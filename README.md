@@ -16,10 +16,8 @@ the elevator pitch.
 # RFC(8259) is the JSON spec.
 
 # IfChange / ThenChange enforces co-modification across files:
-# IfChange
-# Label('hash-params')
+# IfChange('hash-params')
 HASH_PARAMS = {"memory_kib": 19456, "iterations": 2, "parallelism": 1}
-# EndLabel
 # ThenChange(/docs/security.md:hash-params, /tests/test_auth.py:hash-params)
 ```
 
