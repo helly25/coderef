@@ -218,6 +218,7 @@ EXAMPLES
 pub const GLOBAL_HELP: &str = "\
 USAGE
     coderef <subcommand> [options]
+    coderef help [<subcommand>]
 
 SUBCOMMANDS
     config show <path>           Parse + pretty-print a .coderef.jsonc
@@ -226,8 +227,10 @@ SUBCOMMANDS
                                  broken refs
     doctor [opts] [<root>]       Static + scan-dependent integrity checks
     patterns [opts] [<id>]       Inspect configured patterns
+    help [<subcommand>]          Show detailed help for a subcommand
 
-    Every subcommand accepts `--help` / `-h` for detailed sectioned help.
+    `coderef help <subcommand>` and `coderef <subcommand> --help` produce
+    the same output.
 
 PLANNED (per DESIGN.md §20, not yet implemented)
     changes     Coupled-change verifier (v0.2)
@@ -241,4 +244,23 @@ OPTIONS
     -V, --version   Show version banner
 
 For the working specification, see DESIGN.md in the repository root.
+";
+
+pub const HELP_HELP: &str = "\
+USAGE
+    coderef help                 Print global help (same as `coderef --help`).
+    coderef help <subcommand>    Print detailed help for <subcommand>.
+    coderef help config show     Print detailed help for the `config show` action.
+
+DESCRIPTION
+    Universal help entry point. The output is identical to invoking
+    the subcommand with `--help` directly:
+
+        coderef help check       ===  coderef check --help
+
+EXAMPLES
+    coderef help
+    coderef help check
+    coderef help patterns
+    coderef help config show
 ";

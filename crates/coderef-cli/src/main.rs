@@ -44,6 +44,7 @@ fn main() -> ExitCode {
         Some("check") => cmd_check(args.collect()),
         Some("doctor") => cmd_doctor(args.collect()),
         Some("patterns") => cmd_patterns(args.collect()),
+        Some("help") => cmd_help(args.collect()),
         Some(other) => {
             eprintln!("coderef: unknown subcommand `{other}`");
             eprintln!();
@@ -484,6 +485,65 @@ fn indent_block(text: &str, indent: &str) -> String {
 fn print_help() {
     println!("{banner}\n", banner = coderef_core::banner());
     print!("{}", help::GLOBAL_HELP);
+}
+
+/// `coderef help [<subcommand>...]`
+///
+/// Universal help entry point. `coderef help` prints global help;
+/// `coderef help <subcommand>` prints the detailed sectioned help
+/// for that subcommand (the same text as `coderef <subcommand> --help`).
+/// Two-word subcommands like `config show` are accepted: `coderef
+/// help config show`.
+fn cmd_help(args: Vec<String>) -> ExitCode {
+    let mut it = args.into_iter();
+    match it.next().as_deref() {
+        None | Some("help") => {
+            print_help();
+            ExitCode::SUCCESS
+        }
+        Some("--help" | "-h") => {
+            // help on the help command itself — describe how it works.
+            print!("{}", help::HELP_HELP);
+            ExitCode::SUCCESS
+        }
+        Some("config") => match it.next().as_deref() {
+            Some("show") => {
+                print!("{}", help::CONFIG_SHOW_HELP);
+                ExitCode::SUCCESS
+            }
+            Some(other) => {
+                eprintln!("coderef help config: unknown action `{other}`");
+                eprintln!("try `coderef help config show`");
+                ExitCode::from(2)
+            }
+            None => {
+                eprintln!("coderef help config: pick an action — try `coderef help config show`");
+                ExitCode::from(2)
+            }
+        },
+        Some("list") => {
+            print!("{}", help::LIST_HELP);
+            ExitCode::SUCCESS
+        }
+        Some("check") => {
+            print!("{}", help::CHECK_HELP);
+            ExitCode::SUCCESS
+        }
+        Some("doctor") => {
+            print!("{}", help::DOCTOR_HELP);
+            ExitCode::SUCCESS
+        }
+        Some("patterns") => {
+            print!("{}", help::PATTERNS_HELP);
+            ExitCode::SUCCESS
+        }
+        Some(other) => {
+            eprintln!("coderef help: unknown subcommand `{other}`");
+            eprintln!();
+            print_help();
+            ExitCode::from(2)
+        }
+    }
 }
 
 /// `coderef patterns [--config <path>] [--report text|json] [<id>]`
