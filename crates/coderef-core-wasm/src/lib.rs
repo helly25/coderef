@@ -16,12 +16,26 @@
 
 use coderef_core::comment::language_for_extension;
 use coderef_core::config::Config;
-use coderef_core::doctor::{run_doctor, DoctorReport};
+use coderef_core::doctor::{DoctorReport, run_doctor};
 use coderef_core::pattern::CompiledPattern;
 use coderef_core::reference::Reference;
-use coderef_core::scan::{scan_file, ScanOptions};
+use coderef_core::scan::{ScanOptions, scan_file};
 use coderef_core::variables::Context;
+use serde::Serialize;
 use wasm_bindgen::prelude::*;
+
+/// Serialize Rust → `JsValue` with maps rendered as plain JS objects
+/// (not `Map`), so the JS caller can `JSON.stringify` the result and
+/// parse it back without losing keys. `IndexMap`'s default
+/// `serde-wasm-bindgen` mapping is JS `Map`, which serialises as `{}`
+/// under `JSON.stringify` — surprising, and the reason the v0.1 smoke
+/// caught this on first push.
+fn to_js<T: Serialize>(value: &T) -> Result<JsValue, JsValue> {
+    let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
+    value
+        .serialize(&serializer)
+        .map_err(|e| JsValue::from_str(&e.to_string()))
+}
 
 /// Engine version (matches `coderef-core::VERSION`).
 #[wasm_bindgen]
@@ -44,7 +58,7 @@ pub fn banner() -> String {
 #[wasm_bindgen]
 pub fn parse_config(jsonc: &str) -> Result<JsValue, JsValue> {
     let cfg = Config::from_jsonc_str(jsonc).map_err(|e| JsValue::from_str(&e.to_string()))?;
-    serde_wasm_bindgen::to_value(&cfg).map_err(|e| JsValue::from_str(&e.to_string()))
+    to_js(&cfg)
 }
 
 /// Scan a single file buffer. The config and language are passed by
@@ -98,7 +112,7 @@ pub fn scan_buffer(
 
     let refs: Vec<Reference> =
         scan_file(content, &opts).map_err(|e| JsValue::from_str(&e.to_string()))?;
-    serde_wasm_bindgen::to_value(&refs).map_err(|e| JsValue::from_str(&e.to_string()))
+    to_js(&refs)
 }
 
 /// Run the static doctor checks against a config. The workspace-
@@ -109,7 +123,7 @@ pub fn doctor_static(config_json: &str) -> Result<JsValue, JsValue> {
     let cfg: Config =
         serde_json::from_str(config_json).map_err(|e| JsValue::from_str(&e.to_string()))?;
     let report: DoctorReport = run_doctor(&cfg);
-    serde_wasm_bindgen::to_value(&report).map_err(|e| JsValue::from_str(&e.to_string()))
+    to_js(&report)
 }
 
 // ---------------------------------------------------------------------
