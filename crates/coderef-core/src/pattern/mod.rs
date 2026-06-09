@@ -37,9 +37,10 @@ impl CompiledPattern {
         let id = id.into();
         let kind = raw.kind;
 
-        // v0.1 supports only url + local kinds.
+        // v0.1 supports url + local. v0.2 adds block; ifchange/command
+        // are still placeholders.
         match kind {
-            PatternKind::Url | PatternKind::Local => {}
+            PatternKind::Url | PatternKind::Local | PatternKind::Block => {}
             PatternKind::IfChange => {
                 return Err(PatternError::KindNotYetImplemented {
                     id,
@@ -56,18 +57,24 @@ impl CompiledPattern {
             }
         }
 
-        // v0.1 requires single-target.
-        let target_template = match (&raw.target, raw.targets.as_slice()) {
-            (Some(t), []) => t.clone(),
-            (None, []) => {
-                return Err(PatternError::NoTarget { id });
+        // Target requirements differ by kind:
+        // - url / local: single-target required (v0.1 contract; multi-target is v0.3).
+        // - block: target is meaningless (the match itself is the diagnostic).
+        //   Accept `target: null` and ignore `target` if set. `targets[]`
+        //   is still rejected to keep the schema unambiguous.
+        let target_template = match kind {
+            PatternKind::Block => {
+                if !raw.targets.is_empty() {
+                    return Err(PatternError::BlockKindCannotHaveTargets { id });
+                }
+                String::new()
             }
-            (None, _targets) => {
-                return Err(PatternError::MultiTargetNotYetImplemented { id });
-            }
-            (Some(_), _) => {
-                return Err(PatternError::TargetAndTargetsBothSet { id });
-            }
+            _ => match (&raw.target, raw.targets.as_slice()) {
+                (Some(t), []) => t.clone(),
+                (None, []) => return Err(PatternError::NoTarget { id }),
+                (None, _targets) => return Err(PatternError::MultiTargetNotYetImplemented { id }),
+                (Some(_), _) => return Err(PatternError::TargetAndTargetsBothSet { id }),
+            },
         };
 
         let regex = Regex::new(&raw.regex).map_err(|e| PatternError::InvalidRegex {
@@ -129,6 +136,11 @@ pub enum PatternError {
         kind: String,
         expected_version: String,
     },
+
+    /// `kind: "block"` patterns don't resolve to a target; `targets[]`
+    /// would be silently ignored, so we reject it loudly instead.
+    #[error("pattern `{id}` has `kind: \"block\"` and may not declare `targets[]` (the matched text is the diagnostic; no target to resolve)")]
+    BlockKindCannotHaveTargets { id: String },
 }
 
 #[cfg(test)]
@@ -231,6 +243,50 @@ mod tests {
             err,
             PatternError::KindNotYetImplemented { ref kind, .. } if kind == "command"
         ));
+    }
+
+    #[test]
+    fn test_compile_block_kind_without_target_succeeds() {
+        let p = Pattern {
+            regex: r"\bDONOTMERGE\b".into(),
+            kind: PatternKind::Block,
+            ..Default::default()
+        };
+        let c = CompiledPattern::compile("block-default", &p).unwrap();
+        assert_eq!(c.kind, PatternKind::Block);
+        assert_eq!(c.target_template, "");
+    }
+
+    #[test]
+    fn test_compile_block_kind_ignores_target_field() {
+        // Block patterns may carry a stray `target` (e.g. leftover from
+        // copy-pasted config). We accept it and ignore it; the match
+        // itself is the diagnostic.
+        let p = Pattern {
+            regex: "X".into(),
+            target: Some("https://example.org/ignored".into()),
+            kind: PatternKind::Block,
+            ..Default::default()
+        };
+        let c = CompiledPattern::compile("blk", &p).unwrap();
+        assert_eq!(c.kind, PatternKind::Block);
+        assert_eq!(c.target_template, "");
+    }
+
+    #[test]
+    fn test_compile_block_kind_rejects_targets_array() {
+        use crate::config::TargetSpec;
+        let p = Pattern {
+            regex: "X".into(),
+            kind: PatternKind::Block,
+            targets: vec![TargetSpec {
+                url: "https://x".into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let err = CompiledPattern::compile("blk-multi", &p).unwrap_err();
+        assert!(matches!(err, PatternError::BlockKindCannotHaveTargets { .. }));
     }
 
     #[test]

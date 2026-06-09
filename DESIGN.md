@@ -425,13 +425,22 @@ Each pattern is classified by `kind`:
     false`, or `verify.command` for a custom probe).
 - `local` — `target` is a workspace-relative path; resolved via §6. The
   leading-`/` convention (§6.1) makes the workspace-root anchor explicit.
+- `block` — *"must not be present"*. No target; every match is a
+  failure surfaced by `coderef check` (and refused by the pre-commit
+  hook). Intended for `DO NOT COMMIT` / `DO NOT MERGE` /
+  `DONOTMERGE` / `NOCOMMIT` source guards. Typically used with
+  `scope.commentsOnly: true` so docs that *describe* the marker
+  don't self-match. Severity-overridable like any other pattern; a
+  user who wants the marker as a warning instead of an error sets
+  `severity: { default: "warning" }`. Shipped preset:
+  `examples/block-markers.coderef.jsonc`.
 - `ifchange` — a coupled-change pattern; not a single resolver but a marker
   pair (`IfChange`/`ThenChange`) with its own grammar and verifier (§10).
 - `command` — `target` is a custom command name to dispatch (advanced; the
   extension binds it to a `vscode.commands.executeCommand` call).
 
-Resolvers are pluggable; the MVP ships `url`, `local`, and `ifchange`. `command`
-is reserved for v0.3.
+Resolvers are pluggable; the v0.1 + v0.2 ship `url`, `local`, `block`,
+and `ifchange`. `command` is reserved for v0.3.
 
 **Every shape is verified end-to-end by the hook / CLI**, not only by the
 editor. `coderef check` and `coderef check --staged` run the verifier

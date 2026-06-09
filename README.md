@@ -27,12 +27,12 @@ happen on hover. Same regex flavour, same semantics, in both hosts.
 
 ## Planning horizon
 
-| Version  | Theme                                                                                                                                                 |
-| -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **v0.1** | Minimum viable: pattern engine + HTTP verifier + click-to-open. WASM-shared core (no engine divergence between editor and CLI).                       |
-| **v0.2** | Coupled-change (`IfChange`/`ThenChange`) + categories + references browser + commit-message linting + anchor verification for in-repo Markdown.       |
-| **v0.3** | Multi-target references + full network profiles + auto-upgrade codemod (`coderef upgrade`) + visual config editor + external-URL anchor verification. |
-| **v0.4** | LSP server mode + composable coupled-change IDs + git-submodule pass-through.                                                                         |
+| Version  | Theme                                                                                                                                                                                                                              |
+| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **v0.1** | Minimum viable: pattern engine + HTTP verifier + click-to-open. WASM-shared core (no engine divergence between editor and CLI).                                                                                                    |
+| **v0.2** | Coupled-change (`IfChange`/`ThenChange`) + categories + references browser + commit-message linting + anchor verification for in-repo Markdown + block-on-marker (`DO NOT COMMIT` / `NOCOMMIT` source guards via `kind: "block"`). |
+| **v0.3** | Multi-target references + full network profiles + auto-upgrade codemod (`coderef upgrade`) + visual config editor + external-URL anchor verification.                                                                              |
+| **v0.4** | LSP server mode + composable coupled-change IDs + git-submodule pass-through.                                                                                                                                                      |
 
 Anything past v0.4 is deliberately not planned in detail (see
 [`DESIGN.md` §20.5](./DESIGN.md)). The full per-version scope is in

@@ -99,24 +99,33 @@ pub fn scan_file(content: &str, opts: &ScanOptions) -> Result<Vec<Reference>, Sc
                 ctx = ctx.with_capture(k.clone(), v.clone());
             }
 
-            let target =
-                compiled
-                    .resolve_target(&ctx)
-                    .map_err(|source| ScanError::ResolveFailure {
-                        pattern_id: compiled.id.clone(),
-                        file: opts.file.to_string(),
-                        byte_start: match_start,
-                        source,
-                    })?;
-            let title =
-                compiled
-                    .resolve_title(&ctx)
-                    .map_err(|source| ScanError::ResolveFailure {
-                        pattern_id: compiled.id.clone(),
-                        file: opts.file.to_string(),
-                        byte_start: match_start,
-                        source,
-                    })?;
+            // Block-kind patterns have no target to resolve — the
+            // matched text is the diagnostic. We still emit a
+            // `Reference` so the same downstream pipeline (verifier →
+            // CheckReport → CLI output) handles it uniformly.
+            let (target, title) = if compiled.kind == crate::config::PatternKind::Block {
+                (m.as_str().to_string(), None)
+            } else {
+                let target =
+                    compiled
+                        .resolve_target(&ctx)
+                        .map_err(|source| ScanError::ResolveFailure {
+                            pattern_id: compiled.id.clone(),
+                            file: opts.file.to_string(),
+                            byte_start: match_start,
+                            source,
+                        })?;
+                let title =
+                    compiled
+                        .resolve_title(&ctx)
+                        .map_err(|source| ScanError::ResolveFailure {
+                            pattern_id: compiled.id.clone(),
+                            file: opts.file.to_string(),
+                            byte_start: match_start,
+                            source,
+                        })?;
+                (target, title)
+            };
 
             let (line, column) = byte_to_line_col(&line_offsets, match_start, content);
 
@@ -347,6 +356,60 @@ mod tests {
         assert!(refs.is_empty());
     }
 
+    fn p_block(id: &str, regex: &str, comments_only: bool) -> (CompiledPattern, Pattern) {
+        use crate::config::PatternKind;
+        let raw = Pattern {
+            regex: regex.into(),
+            kind: PatternKind::Block,
+            scope: if comments_only {
+                Some(crate::config::ScopeConfig {
+                    comments_only: true,
+                    ..Default::default()
+                })
+            } else {
+                None
+            },
+            ..Default::default()
+        };
+        let compiled = CompiledPattern::compile(id, &raw).unwrap();
+        (compiled, raw)
+    }
+
+    #[test]
+    fn test_scan_block_kind_emits_match_with_text_as_target() {
+        let pats = vec![p_block(
+            "block-default",
+            r"\b(NOCOMMIT|DONOTMERGE|DONOTCOMMIT|DO\s+NOT\s+(COMMIT|MERGE|SUBMIT))\b",
+            false,
+        )];
+        let refs = scan("// DO NOT MERGE this branch", "rs", &pats);
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].pattern_id, "block-default");
+        assert_eq!(refs[0].matched_text, "DO NOT MERGE");
+        // Block kind sets target = matched_text so downstream display
+        // has something to show.
+        assert_eq!(refs[0].target, "DO NOT MERGE");
+        assert_eq!(refs[0].title, None);
+    }
+
+    #[test]
+    fn test_scan_block_kind_respects_comments_only_filter() {
+        let pats = vec![p_block(
+            "block-default",
+            r"\bNOCOMMIT\b",
+            true, // commentsOnly
+        )];
+        // The string-literal occurrence is filtered out; only the
+        // comment occurrence survives. (Markdown CodeSnippet /
+        // string-literal regions are *comment-like* per
+        // `is_in_comment_like`; here we use a Rust source with one
+        // identifier and one comment, so the identifier loses.)
+        let content = "fn NOCOMMIT_keep_token() {} // NOCOMMIT remove before push";
+        let refs = scan(content, "rs", &pats);
+        assert_eq!(refs.len(), 1);
+        assert!(refs[0].in_comment);
+    }
+
     #[test]
     fn test_scan_resolve_failure_surfaces_pattern_id_and_byte_offset() {
         // Target references an unresolved capture that isn't in the
@@ -377,5 +440,12 @@ mod tests {
             }
             other => panic!("expected ResolveFailure, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_scan_block_kind_with_no_match_returns_empty() {
+        let pats = vec![p_block("block-default", r"\bNOCOMMIT\b", false)];
+        let refs = scan("// clean source", "rs", &pats);
+        assert!(refs.is_empty());
     }
 }

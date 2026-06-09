@@ -251,6 +251,38 @@ mod tests {
     }
 
     #[test]
+    fn test_doctor_block_kind_without_target_is_clean() {
+        let cfg = cfg_jsonc(
+            r#"{ "patterns": { "blk": {
+                "kind":  "block",
+                "regex": "\\bDONOTMERGE\\b"
+            } } }"#,
+        );
+        let report = run_doctor(&cfg);
+        assert!(
+            report.passed(),
+            "block kind without target must not flag pattern.targetMissing; got: {:#?}",
+            report.diagnostics
+        );
+    }
+
+    #[test]
+    fn test_doctor_block_kind_with_targets_array_is_flagged() {
+        let cfg = cfg_jsonc(
+            r#"{ "patterns": { "blk": {
+                "kind":    "block",
+                "regex":   "X",
+                "targets": [{ "url": "https://x" }]
+            } } }"#,
+        );
+        let report = run_doctor(&cfg);
+        let found = report.diagnostics.iter().any(|d| {
+            d.check == "pattern.blockKindCannotHaveTargets" && d.severity == Severity::Error
+        });
+        assert!(found, "got: {:#?}", report.diagnostics);
+    }
+
+    #[test]
     fn test_doctor_flags_pattern_targets_both_fields_set() {
         let cfg = cfg_jsonc(
             r#"{ "patterns": { "x": {
