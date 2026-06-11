@@ -14,6 +14,7 @@ import * as vscode from "vscode";
 
 import { type LoadedConfig } from "./configLoader";
 import { type ReferenceCache } from "./referenceCache";
+import { positionToByteOffset } from "./textOffset";
 import {
   type EngineReference,
   type ExplainReport,
@@ -36,11 +37,11 @@ export async function explainReferenceCommand(
   }
   const document = editor.document;
   const position = editor.selection.active;
-  const offset = document.offsetAt(position);
+  const byteOffset = positionToByteOffset(document, position);
 
   const refs = cache.get(document);
   const ref = refs.find(
-    (r) => offset >= r.byte_start && offset < r.byte_end,
+    (r) => byteOffset >= r.byte_start && byteOffset < r.byte_end,
   );
 
   const cfg = getConfig();

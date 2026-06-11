@@ -78,6 +78,41 @@ suite("coderef extension — runtime", function () {
     assert.match(joined, /GitHub @user/, `hover should mention description; got: ${joined}`);
   });
 
+  test("hover resolves the SECOND TODO(@bob) — placed after multi-byte content (em-dash + emoji)", async () => {
+    // Regression guard for the UTF-16 ↔ UTF-8 offset bug. The fixture
+    // contains an em-dash and an emoji before TODO(@bob); if
+    // providers.ts ever reverts to comparing UTF-16 offsets against
+    // engine UTF-8 byte offsets, this lookup will miss because the
+    // engine's byte_start lands past the end of the file in UTF-16
+    // space. Tracked-and-closed entry: docs/test-plan.md.
+    const ws = vscode.workspace.workspaceFolders?.[0];
+    assert.ok(ws);
+    const uri = vscode.Uri.joinPath(ws.uri, "sample.rs");
+    const doc = await vscode.workspace.openTextDocument(uri);
+    await vscode.window.showTextDocument(doc);
+    await sleep(150);
+
+    const text = doc.getText();
+    const offset = text.indexOf("TODO(@bob)");
+    assert.ok(offset >= 0, "fixture must contain TODO(@bob)");
+    const position = doc.positionAt(offset + 1);
+
+    const hovers = (await vscode.commands.executeCommand(
+      "vscode.executeHoverProvider",
+      doc.uri,
+      position,
+    )) as vscode.Hover[];
+
+    assert.ok(
+      Array.isArray(hovers) && hovers.length > 0,
+      "expected at least one hover at TODO(@bob); UTF-16/UTF-8 offset translation may have regressed",
+    );
+    const joined = hovers
+      .flatMap((h) => h.contents.map((c) => (typeof c === "string" ? c : c.value)))
+      .join("\n");
+    assert.match(joined, /todo-user/, `hover at TODO(@bob) should mention pattern id; got: ${joined}`);
+  });
+
   test("coderef.explainReference is registered and runs without throwing", async () => {
     const commands = await vscode.commands.getCommands(/*filterInternal*/ true);
     assert.ok(
