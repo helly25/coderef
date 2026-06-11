@@ -17,6 +17,7 @@ import * as vscode from "vscode";
 
 import { type LoadedConfig } from "./configLoader";
 import { type ReferenceCache } from "./referenceCache";
+import { byteRangeToRange, positionToByteOffset } from "./textOffset";
 import { type EngineReference, patternFor } from "./wasmEngine";
 
 export class CoderefDocumentLinkProvider implements vscode.DocumentLinkProvider {
@@ -45,9 +46,9 @@ export class CoderefHoverProvider implements vscode.HoverProvider {
     _token: vscode.CancellationToken,
   ): vscode.ProviderResult<vscode.Hover> {
     const refs = this.cache.get(document);
-    const offset = document.offsetAt(position);
+    const byteOffset = positionToByteOffset(document, position);
     const r = refs.find(
-      (ref) => offset >= ref.byte_start && offset < ref.byte_end,
+      (ref) => byteOffset >= ref.byte_start && byteOffset < ref.byte_end,
     );
     if (!r) {
       return undefined;
@@ -55,13 +56,7 @@ export class CoderefHoverProvider implements vscode.HoverProvider {
     const cfg = this.getConfig();
     const pattern = patternFor(cfg?.config, r.pattern_id);
     const md = buildHoverMarkdown(r, pattern?.description, linkTargetFor(document, r));
-    return new vscode.Hover(
-      md,
-      new vscode.Range(
-        document.positionAt(r.byte_start),
-        document.positionAt(r.byte_end),
-      ),
-    );
+    return new vscode.Hover(md, byteRangeToRange(document, r.byte_start, r.byte_end));
   }
 }
 
@@ -89,11 +84,10 @@ export function toLink(
   document: vscode.TextDocument,
   r: EngineReference,
 ): vscode.DocumentLink {
-  const range = new vscode.Range(
-    document.positionAt(r.byte_start),
-    document.positionAt(r.byte_end),
+  return new vscode.DocumentLink(
+    byteRangeToRange(document, r.byte_start, r.byte_end),
+    linkTargetFor(document, r),
   );
-  return new vscode.DocumentLink(range, linkTargetFor(document, r));
 }
 
 /** Resolve a `Reference`'s `target` field to a `vscode.Uri` suitable

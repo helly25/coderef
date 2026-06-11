@@ -49,29 +49,23 @@ below.
 
 ---
 
-## UTF-16 vs UTF-8 offset mismatch in providers.ts
+## UTF-16 vs UTF-8 offset mismatch in providers.ts (closed — codified)
 
-- **What was verified**: surfaced by writing the runtime tests for
-  the above entry — the hover provider's position-vs-ref-byte-range
-  comparison uses `document.offsetAt()` (UTF-16 code units on
-  VSCode's side) against the engine's `byte_start` (UTF-8 bytes).
-  For ASCII-only content they coincide; non-ASCII characters
-  earlier in the file shift the byte offset relative to UTF-16,
-  causing hover lookups to miss.
-- **How it was verified**: runtime test failed when the fixture
-  contained an em-dash; passed when the fixture was made
-  ASCII-only. The DocumentLinkProvider has the same shape
-  (`document.positionAt(r.byte_start)`); links are still drawn but
-  the position is off by N (where N is the count of multi-byte
-  characters before the ref). User would see clickable links
-  shifted from the actual text on documents containing emoji /
-  diacritics / Asian scripts / etc.
-- **What test should replace this note**: a unit test on a small
-  conversion helper (`byteOffsetToVscodePosition(doc, byteOffset)`
-  and the inverse) using a fixture document with multi-byte
-  characters before known reference positions. Plus updating the
-  runtime fixture to include non-ASCII and asserting hover still
-  resolves.
-- **Tracked**: follow-up PR.
+- **What was verified**: hover, document-link, and the
+  `coderef.explainReference` command translate between VSCode's
+  UTF-16 positions and the engine's UTF-8 `byte_start` / `byte_end`
+  rather than comparing them naively. Previously they used
+  `document.offsetAt()` (UTF-16) against engine byte offsets
+  (UTF-8); a single em-dash earlier in the file misaligned all
+  subsequent lookups.
+- **Replaced by**: `extension/src/textOffset.ts` (helper) +
+  `extension/src/textOffset.test.ts` (unit tests covering em-dash,
+  emoji surrogate pairs, CJK round-trip, off-by-one boundary cases)
+  + a new runtime test
+  `extension/src/test/runtime/extension.test.ts:hover-resolves-the-SECOND-TODO-bob`
+  that hovers TODO(@bob) after an em-dash + emoji in the fixture.
+  Any regression to UTF-16-vs-UTF-8 comparison fails the hover
+  lookup in that test.
+- **Tracked**: closed by the PR adding `extension/src/textOffset.ts`.
 
 ---
