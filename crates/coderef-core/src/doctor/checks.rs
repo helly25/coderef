@@ -60,6 +60,59 @@ fn push_diag(
     });
 }
 
+/// Default ceiling on patterns sharing `category: "other"` before
+/// doctor emits a `category.tooBroadOther` info. DESIGN.md §5.7.4
+/// defers per-workspace override to the v0.3 visual editor's
+/// `integrity.maxOtherPatterns` setting; v0.2 hard-codes the default.
+const MAX_OTHER_PATTERNS_DEFAULT: usize = 5;
+
+/// `category.tooBroadOther` — too many patterns are bucketed in
+/// `other`, defeating category-based grouping. Counts both
+/// explicitly-declared `"other"` and patterns that *infer* to `other`
+/// (i.e. `kind: "url"` without a declared `category`); the latter
+/// already get a `category.unset` info so this check is the aggregate
+/// signal.
+pub(super) fn check_too_broad_other(cfg: &Config, out: &mut Vec<Diagnostic>) {
+    let mut others: Vec<&str> = Vec::new();
+    for (id, p) in &cfg.patterns {
+        let resolved = p
+            .category
+            .as_deref()
+            .unwrap_or_else(|| crate::category::infer_category(p.kind));
+        if resolved == "other" {
+            others.push(id.as_str());
+        }
+    }
+    if others.len() > MAX_OTHER_PATTERNS_DEFAULT {
+        // No per-pattern owner; attach the diagnostic without a
+        // pattern_id. Severity goes through the workspace-level
+        // override (no per-pattern override applies here).
+        let sev = cfg
+            .severity
+            .get("category.tooBroadOther")
+            .copied()
+            .unwrap_or(Severity::Info);
+        if sev == Severity::Off {
+            return;
+        }
+        out.push(Diagnostic {
+            check: "category.tooBroadOther".into(),
+            severity: sev,
+            pattern_id: None,
+            message: format!(
+                "{count} patterns share category `other` (default ceiling {ceiling}); the \
+                 references browser loses semantic grouping when too many fall here",
+                count = others.len(),
+                ceiling = MAX_OTHER_PATTERNS_DEFAULT,
+            ),
+            hint: Some(format!(
+                "declare a `category` on each: {}",
+                others.join(", ")
+            )),
+        });
+    }
+}
+
 /// Run every per-pattern check, appending diagnostics in place.
 #[allow(clippy::too_many_lines)] // every check is small; one fn keeps the order obvious
 pub fn check_pattern(id: &str, p: &Pattern, cfg: &Config, out: &mut Vec<Diagnostic>) {
@@ -260,7 +313,31 @@ pub fn check_pattern(id: &str, p: &Pattern, cfg: &Config, out: &mut Vec<Diagnost
         }
     }
 
-    // 4) captureUnused: any named capture that wasn't referenced.
+    // 4) category.unset — `kind: "url"` without a declared `category`.
+    //    DESIGN.md §5.7.4. The inferred category for url is `other`,
+    //    which is fine but loses semantic grouping; we surface it as
+    //    `Info` so users see the suggestion without breaking CI.
+    if p.kind == crate::config::PatternKind::Url && p.category.is_none() {
+        push_diag(
+            out,
+            cfg,
+            p,
+            id,
+            "category.unset",
+            Severity::Info,
+            format!(
+                "pattern `{id}` declares `kind: \"url\"` without a `category`; the references \
+                 browser will group it under `other`"
+            ),
+            Some(
+                "declare one of: `people`, `tickets`, `standards`, `urls` — or a user-defined \
+                 category like `slack-channels`. See DESIGN.md §5.7."
+                    .into(),
+            ),
+        );
+    }
+
+    // 5) captureUnused: any named capture that wasn't referenced.
     for cap in &regex_caps {
         if !referenced_captures.contains(cap) {
             push_diag(

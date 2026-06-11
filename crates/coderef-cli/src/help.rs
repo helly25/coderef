@@ -244,6 +244,13 @@ OPTIONS
         emits the underlying `Config.patterns` map (or a single
         `Pattern` if <id> is given).
 
+    --by-category
+        Group patterns by their resolved (declared or inferred)
+        category, in DESIGN.md §5.7.3 display order
+        (files → people → tickets → standards → urls →
+        coupled-change → user-defined → other). Text-mode only; not
+        compatible with a specific <id>.
+
     -h, --help
         Show this help and exit.
 
