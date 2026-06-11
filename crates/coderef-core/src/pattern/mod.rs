@@ -286,7 +286,10 @@ mod tests {
             ..Default::default()
         };
         let err = CompiledPattern::compile("blk-multi", &p).unwrap_err();
-        assert!(matches!(err, PatternError::BlockKindCannotHaveTargets { .. }));
+        assert!(matches!(
+            err,
+            PatternError::BlockKindCannotHaveTargets { .. }
+        ));
     }
 
     #[test]

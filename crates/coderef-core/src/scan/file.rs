@@ -103,29 +103,28 @@ pub fn scan_file(content: &str, opts: &ScanOptions) -> Result<Vec<Reference>, Sc
             // matched text is the diagnostic. We still emit a
             // `Reference` so the same downstream pipeline (verifier →
             // CheckReport → CLI output) handles it uniformly.
-            let (target, title) = if compiled.kind == crate::config::PatternKind::Block {
-                (m.as_str().to_string(), None)
-            } else {
-                let target =
-                    compiled
-                        .resolve_target(&ctx)
-                        .map_err(|source| ScanError::ResolveFailure {
+            let (target, title) =
+                if compiled.kind == crate::config::PatternKind::Block {
+                    (m.as_str().to_string(), None)
+                } else {
+                    let target = compiled.resolve_target(&ctx).map_err(|source| {
+                        ScanError::ResolveFailure {
                             pattern_id: compiled.id.clone(),
                             file: opts.file.to_string(),
                             byte_start: match_start,
                             source,
-                        })?;
-                let title =
-                    compiled
-                        .resolve_title(&ctx)
-                        .map_err(|source| ScanError::ResolveFailure {
+                        }
+                    })?;
+                    let title = compiled.resolve_title(&ctx).map_err(|source| {
+                        ScanError::ResolveFailure {
                             pattern_id: compiled.id.clone(),
                             file: opts.file.to_string(),
                             byte_start: match_start,
                             source,
-                        })?;
-                (target, title)
-            };
+                        }
+                    })?;
+                    (target, title)
+                };
 
             let (line, column) = byte_to_line_col(&line_offsets, match_start, content);
 

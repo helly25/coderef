@@ -86,11 +86,7 @@ fn integration_block_marker_outside_comment_is_filtered_by_scope() {
     // `DONOTMERGE` appears only inside an identifier in real code — no
     // comment, no string. `commentsOnly: true` filters it out, so
     // `coderef check` passes.
-    write(
-        &root,
-        "src/lib.rs",
-        "fn DONOTMERGE_helper() -> u8 { 42 }\n",
-    );
+    write(&root, "src/lib.rs", "fn DONOTMERGE_helper() -> u8 { 42 }\n");
 
     let cfg = Config::from_jsonc_str(BLOCK_CONFIG).unwrap();
     let refs = scan_workspace(&root, &cfg).unwrap();
