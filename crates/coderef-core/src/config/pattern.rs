@@ -12,7 +12,9 @@ use crate::severity::Severity;
 
 /// Reference kinds. See `DESIGN.md` §5.2.
 ///
-/// v0.1 implements `Url` and `Local`. `IfChange` is accepted by the schema
+/// v0.1 implements `Url` and `Local`. `Block` (DESIGN §5.2.1, v0.2) is
+/// the "marker must not be present" kind used for `DO NOT COMMIT` /
+/// `DO NOT MERGE` style guards. `IfChange` is accepted by the schema
 /// so v0.2 configs parse, but the v0.1 engine rejects it during scan.
 /// `Command` is reserved for the post-v0.4 backlog.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -24,6 +26,11 @@ pub enum PatternKind {
     Url,
     /// Target is a workspace-relative path resolved via §6.
     Local,
+    /// "Must not be present" marker. Every match is a failure surfaced
+    /// by `coderef check`; intended for `DO NOT COMMIT` / `DO NOT
+    /// MERGE` style guards. No target resolution; the matched text is
+    /// itself the diagnostic.
+    Block,
     /// Coupled-change marker pair (v0.2; see §10).
     IfChange,
     /// Custom command (post-v0.4 backlog).

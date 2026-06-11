@@ -176,6 +176,31 @@ mod tests {
     }
 
     #[test]
+    fn test_check_references_block_marker_counted_as_broken() {
+        let refs = vec![Reference {
+            pattern_id: "block-default".into(),
+            pattern_kind: PatternKind::Block,
+            file: "x.rs".into(),
+            line: 1,
+            column: 1,
+            byte_start: 0,
+            byte_end: 8,
+            matched_text: "NOCOMMIT".into(),
+            captures: IndexMap::new(),
+            target: "NOCOMMIT".into(),
+            title: None,
+            in_comment: true,
+        }];
+        let opts = VerifyOptions::default();
+        let report = check_references(refs, &opts).unwrap();
+        assert_eq!(report.total, 1);
+        assert_eq!(report.broken, 1);
+        assert_eq!(report.ok, 0);
+        assert_eq!(report.skipped, 0);
+        assert!(!report.passed());
+    }
+
+    #[test]
     fn test_check_references_local_existing_path_counted_as_ok() {
         let tmp = std::env::temp_dir().join(format!(
             "coderef-check-ok-{}-{}",

@@ -1,0 +1,30 @@
+// Example: source-level "do not commit / merge / submit" guards.
+//
+// Each pattern below has `kind: "block"`. Every match is a failure
+// surfaced by `coderef check` — `coderef check` exits 1, the
+// pre-commit hook refuses the commit, CI fails the build.
+//
+// `scope.commentsOnly: true` keeps documentation files that *describe*
+// these markers (READMEs, DESIGN docs) from self-matching. If you want
+// the marker to fire in code as well, set `commentsOnly: false`.
+//
+// Per-file bypass: add the path to `scope.exclude` on the pattern.
+// (Inline `NoVerify` markers are designed in DESIGN.md §10.6 but not
+// yet implemented; until then, the way to suppress an intentional
+// occurrence is to break the literal — e.g. `DO​NOT​MERGE`
+// or `DO" "NOT MERGE` in a string — or to exclude the file.)
+//
+// Validates against ../schema/coderef.schema.json.
+
+{
+  "$schema": "../schema/coderef.schema.json",
+
+  "patterns": {
+    "block-default": {
+      "description": "Source-level block-on-marker. Remove before committing.",
+      "kind":  "block",
+      "regex": "\\b(NOCOMMIT|DONOTCOMMIT|DONOTMERGE|DO\\s+NOT\\s+(COMMIT|MERGE|SUBMIT))\\b",
+      "scope": { "commentsOnly": true }
+    }
+  }
+}

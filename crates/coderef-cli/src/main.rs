@@ -291,6 +291,7 @@ fn print_text_report(report: &coderef_core::check::CheckReport) {
         let prefix = match &r.outcome {
             VerifyOutcome::Ok => "ok    ",
             VerifyOutcome::Skipped { .. } => "skip  ",
+            VerifyOutcome::BlockMarker { .. } => "BLOCK ",
             _ => "BROKEN",
         };
         let detail = match &r.outcome {
@@ -298,6 +299,9 @@ fn print_text_report(report: &coderef_core::check::CheckReport) {
             VerifyOutcome::BrokenStatus { status } => format!("  (status {status})"),
             VerifyOutcome::BrokenNetwork { reason } => format!("  ({reason})"),
             VerifyOutcome::NotFound { path } => format!("  (no such file: {path})"),
+            VerifyOutcome::BlockMarker { matched_text } => {
+                format!("  (block marker present: `{matched_text}`)")
+            }
             VerifyOutcome::Skipped { reason } => format!("  ({reason})"),
         };
         println!(
@@ -758,7 +762,13 @@ fn print_explain_text(report: &coderef_core::explain::ExplainReport) {
                     .collect();
                 println!("    captures:  {captures}", captures = caps.join(", "));
             }
-            println!("    target:    {target}", target = m.target);
+            // Block-kind patterns have no resolved target; the match
+            // *is* the diagnostic. Skip the empty `target:` line.
+            if m.pattern_kind == coderef_core::config::PatternKind::Block {
+                println!("    effect:    block — this match would fail `coderef check`");
+            } else {
+                println!("    target:    {target}", target = m.target);
+            }
             if let Some(title) = &m.title {
                 println!("    title:     {title}");
             }

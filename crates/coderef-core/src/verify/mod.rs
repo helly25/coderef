@@ -35,6 +35,10 @@ pub enum VerifyOutcome {
     BrokenNetwork { reason: String },
     /// Local-path target did not exist.
     NotFound { path: String },
+    /// A `kind: "block"` pattern matched — the presence of the marker
+    /// is itself the failure (e.g. `DO NOT COMMIT`, `NOCOMMIT`,
+    /// `DONOTMERGE`). `matched_text` is the literal token that matched.
+    BlockMarker { matched_text: String },
     /// Kind not yet implemented or verification turned off.
     Skipped { reason: String },
 }
@@ -138,6 +142,9 @@ pub fn verify_reference(r: &Reference, opts: &VerifyOptions) -> Result<VerifyOut
     match r.pattern_kind {
         PatternKind::Url => Ok(self::http::verify_http(&r.target, opts)),
         PatternKind::Local => Ok(self::local::verify_local(&r.target, &opts.workspace_root)),
+        PatternKind::Block => Ok(VerifyOutcome::BlockMarker {
+            matched_text: r.matched_text.clone(),
+        }),
         PatternKind::IfChange => Ok(VerifyOutcome::Skipped {
             reason: "kind `ifchange` is verified by `coderef changes` (v0.2)".into(),
         }),
@@ -263,6 +270,41 @@ mod tests {
         };
         let result = verify_reference(&r, &VerifyOptions::default()).unwrap();
         assert!(matches!(result, VerifyOutcome::Skipped { .. }));
+    }
+
+    #[test]
+    fn test_verify_block_kind_returns_block_marker_with_matched_text() {
+        let r = Reference {
+            pattern_id: "block-default".into(),
+            pattern_kind: PatternKind::Block,
+            file: "x.rs".into(),
+            line: 3,
+            column: 1,
+            byte_start: 0,
+            byte_end: 12,
+            matched_text: "DO NOT MERGE".into(),
+            captures: indexmap::IndexMap::new(),
+            target: "DO NOT MERGE".into(),
+            title: None,
+            in_comment: true,
+        };
+        let result = verify_reference(&r, &VerifyOptions::default()).unwrap();
+        match result {
+            VerifyOutcome::BlockMarker { matched_text } => {
+                assert_eq!(matched_text, "DO NOT MERGE");
+            }
+            other => panic!("expected BlockMarker, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_verify_outcome_block_marker_is_failure() {
+        let o = VerifyOutcome::BlockMarker {
+            matched_text: "NOCOMMIT".into(),
+        };
+        assert!(o.is_failure());
+        assert!(!o.is_ok());
+        assert!(!o.is_skipped());
     }
 
     #[test]

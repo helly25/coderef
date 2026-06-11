@@ -63,35 +63,60 @@ fn push_diag(
 /// Run every per-pattern check, appending diagnostics in place.
 #[allow(clippy::too_many_lines)] // every check is small; one fn keeps the order obvious
 pub fn check_pattern(id: &str, p: &Pattern, cfg: &Config, out: &mut Vec<Diagnostic>) {
-    // 1) target / targets validity.
+    // 1) target / targets validity. Block-kind patterns don't resolve
+    // to anything (the match itself is the diagnostic), so we skip
+    // target validation for them — except we still flag the
+    // unambiguous misuse of declaring `targets[]` on a block pattern,
+    // which is rejected at compile time.
     let has_target = p.target.is_some();
     let has_targets = !p.targets.is_empty();
-    match (has_target, has_targets) {
-        (false, false) => {
+    if p.kind == crate::config::PatternKind::Block {
+        if has_targets {
             push_diag(
                 out,
                 cfg,
                 p,
                 id,
-                "pattern.targetMissing",
+                "pattern.blockKindCannotHaveTargets",
                 Severity::Error,
-                format!("pattern `{id}` has neither `target` nor `targets[]`"),
-                Some("set `target: \"...\"` (single) or `targets: [...]` (multi)".into()),
+                format!("pattern `{id}` has `kind: \"block\"` and may not declare `targets[]`"),
+                Some(
+                    "remove `targets[]` from block patterns — the matched text is the diagnostic"
+                        .into(),
+                ),
             );
         }
-        (true, true) => {
-            push_diag(
-                out,
-                cfg,
-                p,
-                id,
-                "pattern.targetsBothFieldsSet",
-                Severity::Error,
-                format!("pattern `{id}` declares both `target` and `targets[]`"),
-                Some("pick one form: drop `target` to use multi-target, or empty `targets`".into()),
-            );
+    } else {
+        match (has_target, has_targets) {
+            (false, false) => {
+                push_diag(
+                    out,
+                    cfg,
+                    p,
+                    id,
+                    "pattern.targetMissing",
+                    Severity::Error,
+                    format!("pattern `{id}` has neither `target` nor `targets[]`"),
+                    Some("set `target: \"...\"` (single) or `targets: [...]` (multi)".into()),
+                );
+            }
+            (true, true) => {
+                push_diag(
+                    out,
+                    cfg,
+                    p,
+                    id,
+                    "pattern.targetsBothFieldsSet",
+                    Severity::Error,
+                    format!("pattern `{id}` declares both `target` and `targets[]`"),
+                    Some(
+                        "pick one form: drop `target` to use multi-target, or empty `targets`"
+                            .into(),
+                    ),
+                );
+            }
+            _ => {}
         }
-        _ => {}
     }
 
     // 2) regex compile.
