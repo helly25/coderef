@@ -302,6 +302,16 @@ fn print_text_report(report: &coderef_core::check::CheckReport) {
             VerifyOutcome::BlockMarker { matched_text } => {
                 format!("  (block marker present: `{matched_text}`)")
             }
+            VerifyOutcome::AnchorNotFound {
+                path,
+                anchor,
+                suggestion,
+            } => match suggestion {
+                Some(s) => {
+                    format!("  (anchor `#{anchor}` not found in {path}; did you mean `#{s}`?)")
+                }
+                None => format!("  (anchor `#{anchor}` not found in {path})"),
+            },
             VerifyOutcome::Skipped { reason } => format!("  ({reason})"),
         };
         println!(
