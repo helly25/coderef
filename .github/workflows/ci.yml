@@ -486,3 +486,15 @@ jobs:
             echo "Unbalanced code fences in DESIGN.md: $n"
             exit 1
           fi
+
+  # Single aggregating gate for branch protection: mark only "done" as required.
+  # `if: always()` runs it even when a dependency fails/cancels; it then fails if
+  # any dependency did not succeed. Keep `needs` in sync with the jobs above.
+  done:
+    if: always()
+    needs: [pre-commit, test]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any dependency did not succeed
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1
