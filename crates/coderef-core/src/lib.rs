@@ -16,6 +16,8 @@
 #[cfg(not(target_arch = "wasm32"))]
 pub mod check;
 pub mod comment;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod commit_msg;
 pub mod config;
 pub mod doctor;
 pub mod error;

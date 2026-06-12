@@ -1,9 +1,9 @@
 //! Scoping configuration. See `DESIGN.md` §5.4.
 //!
-//! v0.1 honours `include`, `exclude`, `commentsOnly`. Full `prefix`
-//! policy (§5.4.2) and `commitMessage` (§5.4.3) land in v0.2 — they are
-//! present in the type for forward compatibility but ignored by the v0.1
-//! engine.
+//! v0.1 honoured `include`, `exclude`, `commentsOnly`. v0.2 adds
+//! `commitMessage` semantics (§5.4.3, wired into `coderef commit-msg`).
+//! `prefix` (§5.4.2) remains a forward-compat field accepted by the
+//! schema but not yet exercised.
 
 #[cfg(feature = "schemars")]
 use schemars::JsonSchema;
@@ -30,14 +30,39 @@ pub struct ScopeConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prefix: Option<serde_json::Value>,
 
-    /// Commit-message scope (v0.2; §5.4.3). Accepted for forward compat.
-    /// Either a boolean or the string `"required"`.
+    /// Commit-message scope (§5.4.3). `true` / `false` / `"required"`.
+    /// `None` = use the kind-based default (`true` for url/local;
+    /// `false` for ifchange/block/command).
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         rename = "commitMessage"
     )]
-    pub commit_message: Option<serde_json::Value>,
+    pub commit_message: Option<CommitMessageScope>,
+}
+
+/// Per-pattern commit-message scope. See `DESIGN.md` §5.4.3.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(JsonSchema))]
+#[serde(untagged)]
+pub enum CommitMessageScope {
+    /// `true` — pattern scans commit messages. `false` — pattern does
+    /// NOT scan commit messages.
+    Bool(bool),
+    /// `"required"` — every commit message must contain at least one
+    /// match of this pattern. Missing matches are reported as a
+    /// `commitMessageMissing` diagnostic on the pattern.
+    Tag(CommitMessageTag),
+}
+
+/// String tag for `CommitMessageScope::Tag`. Single-variant enum so
+/// serde can distinguish it from `Bool` in the untagged form.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(JsonSchema))]
+#[serde(rename_all = "lowercase")]
+pub enum CommitMessageTag {
+    /// `"required"` — pattern must match every commit message.
+    Required,
 }
 
 fn is_default<T: Default + PartialEq>(t: &T) -> bool {
@@ -79,5 +104,40 @@ mod tests {
         .unwrap();
         assert!(s.prefix.is_some());
         assert!(s.commit_message.is_some());
+    }
+
+    #[test]
+    fn test_scope_commit_message_parses_bool_true() {
+        let s: ScopeConfig = serde_json::from_str(r#"{ "commitMessage": true }"#).unwrap();
+        assert_eq!(s.commit_message, Some(CommitMessageScope::Bool(true)));
+    }
+
+    #[test]
+    fn test_scope_commit_message_parses_bool_false() {
+        let s: ScopeConfig = serde_json::from_str(r#"{ "commitMessage": false }"#).unwrap();
+        assert_eq!(s.commit_message, Some(CommitMessageScope::Bool(false)));
+    }
+
+    #[test]
+    fn test_scope_commit_message_parses_required_tag() {
+        let s: ScopeConfig = serde_json::from_str(r#"{ "commitMessage": "required" }"#).unwrap();
+        assert_eq!(
+            s.commit_message,
+            Some(CommitMessageScope::Tag(CommitMessageTag::Required))
+        );
+    }
+
+    #[test]
+    fn test_scope_commit_message_rejects_unknown_string() {
+        let err =
+            serde_json::from_str::<ScopeConfig>(r#"{ "commitMessage": "bogus" }"#).unwrap_err();
+        // The exact wording depends on serde; the contract is that
+        // it does not silently coerce to Bool(true) or anything else.
+        assert!(
+            err.to_string().contains("data did not match")
+                || err.to_string().contains("unknown variant")
+                || err.to_string().contains("commitMessage"),
+            "got: {err}"
+        );
     }
 }
