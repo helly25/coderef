@@ -29,7 +29,7 @@ impl ChangedLines {
     #[must_use]
     pub fn file_touched(&self, file: &str) -> bool {
         let key = file.trim_start_matches('/');
-        self.inner.get(key).map_or(false, |ivs| !ivs.is_empty())
+        self.inner.get(key).is_some_and(|ivs| !ivs.is_empty())
     }
 
     /// Returns `true` if any of `lines` falls inside a changed
@@ -64,10 +64,12 @@ impl ChangedLines {
     }
 }
 
-/// Parse `git diff -U0` output. Skips binary diffs. Honours rename
-/// headers (the new path becomes the canonical file). Headers like
-/// `--- a/foo` / `+++ b/foo` give the path; the `@@ -A,B +C,D @@`
-/// hunk header gives the changed-line range in the new file.
+/// Parse `git diff -U0` output.
+///
+/// Skips binary diffs. Honours rename headers (the new path becomes
+/// the canonical file). Headers like `--- a/foo` / `+++ b/foo` give
+/// the path; the `@@ -A,B +C,D @@` hunk header gives the
+/// changed-line range in the new file.
 #[must_use]
 pub fn parse_unified_diff(diff: &str) -> ChangedLines {
     let mut out: BTreeMap<String, Vec<(u32, u32)>> = BTreeMap::new();
@@ -125,7 +127,6 @@ pub fn parse_unified_diff(diff: &str) -> ChangedLines {
                         .push((start, start + len - 1));
                 }
             }
-            continue;
         }
     }
 
@@ -149,7 +150,7 @@ fn strip_diff_path_prefix(s: &str) -> Option<String> {
 
 /// Parse the *suffix* of a unified-diff hunk header — everything
 /// after the leading `@@`. Format: ` -OLDSTART[,OLDLEN] +NEWSTART[,NEWLEN] @@`.
-/// Returns (new_start, new_len). `new_len` defaults to 1 when omitted
+/// Returns (`new_start`, `new_len`). `new_len` defaults to 1 when omitted
 /// (matches GNU diff conventions).
 fn parse_hunk_header(rest: &str) -> Option<(u32, u32)> {
     // Find the new-side `+` segment. Walk char-by-char to keep it

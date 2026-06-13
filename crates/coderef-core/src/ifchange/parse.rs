@@ -1,4 +1,4 @@
-//! IfChange / ThenChange marker parsing.
+//! `IfChange` / `ThenChange` marker parsing.
 //!
 //! Walks a source file line-by-line and produces a list of paired
 //! blocks. Marker regexes are hardcoded for v0.2 — the common spelling
@@ -43,7 +43,7 @@ pub struct IfChangeBlock {
     /// Optional id captured from `IfChange(my-id)`. None / empty for
     /// Shape A blocks.
     pub id: Option<String>,
-    /// Explicit ThenChange targets (Shape A). Empty for Shape B.
+    /// Explicit `ThenChange` targets (Shape A). Empty for Shape B.
     pub targets: Vec<Target>,
     /// Inline `NoVerify(coderef:ifchange): reason` if found on the
     /// `IfChange` line or the line immediately above it. The verifier
@@ -180,7 +180,7 @@ pub fn extract_blocks(content: &str, file: &str) -> MarkerParseReport {
                 }
                 match parse_target(raw) {
                     Ok(t) => targets.push(t),
-                    Err(_) => errors.push(MarkerParseError::MalformedTarget {
+                    Err(()) => errors.push(MarkerParseError::MalformedTarget {
                         file: file.to_string(),
                         line: line_num,
                         token: raw.to_string(),

@@ -661,6 +661,7 @@ fn cmd_patterns(args: Vec<String>) -> ExitCode {
 /// (`HEAD` by default, or `<base>..HEAD` with `--base`, or staged
 /// changes with `--staged`), and reports any block touched by the
 /// diff whose required peers/targets weren't also touched.
+#[allow(clippy::too_many_lines)] // arg parsing + dispatch is naturally long
 fn cmd_changes(args: Vec<String>) -> ExitCode {
     let mut config_path: Option<String> = None;
     let mut report = Report::Text;

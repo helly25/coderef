@@ -12,18 +12,18 @@
 //! - Shape A: explicit `ThenChange(/path, /path:N, /path:N-M)` targets.
 //! - Shape B: id-anchored cross-file groups (`IfChange(my-id)` ...
 //!   `ThenChange`).
-//! - Block bounding: `paired` (each IfChange pairs with the next
-//!   ThenChange in the same file).
-//! - NoVerify escape hatch inline above the IfChange marker.
+//! - Block bounding: `paired` (each `IfChange` pairs with the next
+//!   `ThenChange` in the same file).
+//! - `NoVerify` escape hatch inline above the `IfChange` marker.
 //!
 //! Deferred (DESIGN §10.7 / §10.4 / §10.2):
 //! - Shape C composable ids — requires resolving the id through the
 //!   reference engine.
 //! - Glob targets (`/path/*.md`) and `{any}`/`{all}`/`{soft}` flags.
-//! - Anchor targets in ThenChange (`/path#anchor`) and label
+//! - Anchor targets in `ThenChange` (`/path#anchor`) and label
 //!   sub-region targets (`/path:label-name`).
 //! - `bounding: multipleThenChange` and `allowNesting`.
-//! - Per-commit-message NoVerify lines.
+//! - Per-commit-message `NoVerify` lines.
 
 mod diff;
 mod parse;
@@ -99,8 +99,10 @@ pub enum ScanBlocksError {
 }
 
 /// `true` when the config declares at least one `kind: "ifchange"`
-/// pattern — IfChange/ThenChange marker detection is opt-in. Avoids
-/// surprise behaviour for users who only configure `kind: "url"` and
+/// pattern.
+///
+/// IfChange/ThenChange marker detection is opt-in. Avoids surprise
+/// behaviour for users who only configure `kind: "url"` and
 /// `kind: "local"` patterns.
 #[must_use]
 pub fn ifchange_enabled(cfg: &Config) -> bool {

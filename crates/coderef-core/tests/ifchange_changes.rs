@@ -68,7 +68,7 @@ fn integration_shape_a_missing_target_fails() {
     assert_eq!(blocks.len(), 1);
     let cl = parse_unified_diff(diff);
     let report = verify_changes(&blocks, &errors, &cl);
-    assert!(!report.passed(), "{:#?}", report);
+    assert!(!report.passed(), "{report:#?}");
     assert_eq!(report.violations.len(), 1);
     assert_eq!(report.violations[0].kind, "missing-target");
     assert!(report.violations[0].message.contains("/docs/security.md"));
@@ -99,7 +99,7 @@ fn integration_shape_a_target_also_changed_passes() {
     assert!(errors.is_empty());
     let cl = parse_unified_diff(diff);
     let report = verify_changes(&blocks, &errors, &cl);
-    assert!(report.passed(), "{:#?}", report);
+    assert!(report.passed(), "{report:#?}");
     fs::remove_dir_all(&root).unwrap();
 }
 
@@ -155,7 +155,7 @@ fn integration_no_verify_silences_violation() {
     assert!(errors.is_empty());
     let cl = parse_unified_diff(diff);
     let report = verify_changes(&blocks, &errors, &cl);
-    assert!(report.passed(), "{:#?}", report);
+    assert!(report.passed(), "{report:#?}");
     assert_eq!(report.no_verify_block_count, 1);
     fs::remove_dir_all(&root).unwrap();
 }
@@ -176,7 +176,7 @@ fn integration_unrelated_diff_does_not_fire_blocks() {
     let (blocks, errors) = scan_workspace_blocks(&root, &cfg).unwrap();
     let cl = parse_unified_diff(diff);
     let report = verify_changes(&blocks, &errors, &cl);
-    assert!(report.passed(), "{:#?}", report);
+    assert!(report.passed(), "{report:#?}");
     assert_eq!(report.changed_block_count, 0);
     fs::remove_dir_all(&root).unwrap();
 }

@@ -28,7 +28,7 @@ pub struct Violation {
 /// Kind of coupled-change violation. Mirrors DESIGN §10.9 codes.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ViolationKind {
-    /// Shape A: an explicit ThenChange target wasn't touched by the
+    /// Shape A: an explicit `ThenChange` target wasn't touched by the
     /// diff.
     MissingTarget,
     /// Shape B: a sibling block (same id, different file or position)
@@ -85,6 +85,7 @@ pub struct ParseErrorReport {
 /// per-file via `extract_blocks` and concatenated); `parse_errors`
 /// carries forward any marker-parse failures the caller collected.
 #[must_use]
+#[allow(clippy::too_many_lines)] // pass 3 is naturally long; splitting hides flow
 pub fn verify_changes(
     blocks: &[IfChangeBlock],
     parse_errors: &[MarkerParseError],
@@ -307,7 +308,7 @@ mod tests {
         );
         let cl = ChangedLines::from_pairs(&[("a.rs", &[(5, 5)]), ("b.md", &[(1, 1)])]);
         let r = verify_changes(&[b], &[], &cl);
-        assert!(r.passed(), "{:#?}", r);
+        assert!(r.passed(), "{r:#?}");
     }
 
     #[test]
@@ -366,7 +367,7 @@ mod tests {
         let b2 = block("b.rs", 10, 15, Some("auth-v3"), vec![]);
         let cl = ChangedLines::from_pairs(&[("a.rs", &[(2, 2)]), ("b.rs", &[(12, 12)])]);
         let r = verify_changes(&[b1, b2], &[], &cl);
-        assert!(r.passed(), "{:#?}", r);
+        assert!(r.passed(), "{r:#?}");
     }
 
     #[test]
