@@ -1018,11 +1018,11 @@ alphabetical order; the position is configurable per category via
 
 #### 5.7.4 Doctor checks
 
-| Check                     | Severity | Trigger                                                                                                    |
-| ------------------------- | -------- | ---------------------------------------------------------------------------------------------------------- |
-| `category.unset`          | info     | `kind: "url"` pattern omits `category`. Doctor guesses from regex shape and suggests.                      |
-| `category.mismatch`       | warning  | Captured values consistently start with a sigil (`@`, `/`, `http`) that contradicts the declared category. |
-| `category.tooBroadOther`  | info     | More than `integrity.maxOtherPatterns` (default 5) patterns share `category: "other"`.                     |
+| Check                     | Severity | Trigger                                                                                                                                                                                                                                      |
+| ------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `category.unset`          | info     | `kind: "url"` pattern omits `category`. Doctor's hint lists the built-in names; the inferred fallback is `other`. *Shipped in v0.2.*                                                                                                         |
+| `category.mismatch`       | warning  | Captured values consistently start with a sigil (`@`, `/`, `http`) that contradicts the declared category. *Scan-dependent — designed; v0.3 deliverable alongside the references browser.*                                                   |
+| `category.tooBroadOther`  | info     | More than `integrity.maxOtherPatterns` (default 5) patterns share `category: "other"` after inference. *Shipped in v0.2; the workspace-level override knob lands with the visual editor in v0.3, the default ceiling is hard-coded for now.* |
 
 ### 5.8 Per-pattern editor styling (v0.3)
 
@@ -1255,29 +1255,39 @@ Given a resolved local target file and a captured `${anchor}`:
 
 1. If `anchorVerify` is `never`, or the captured anchor is empty under
    `ifPresent`, return *resolved*.
-2. Read the target file (cache-keyed by `mtime`).
-3. Parse with `pulldown-cmark` (or `comrak` for GitHub-flavoured
-   markdown by default).
-4. Walk all `Heading` events and any explicit `{#id}` attributes;
-   derive the slug set via the configured `slugifier`.
+2. Read the target file. (v0.2 reads on every check; an `mtime`-keyed
+   cache is in the post-v0.4 backlog alongside the v0.3 verifier cache
+   work.)
+3. Walk Markdown ATX headings (`#`-prefixed); skip headings inside
+   fenced code blocks (\`\`\` / `~~~`). v0.2 uses a hand-rolled
+   line-walker rather than `pulldown-cmark`/`comrak` to keep the
+   dependency surface small ([[feedback_no_heavyweight_native_deps]]).
+4. Derive the slug set via the configured `slugifier`; honour explicit
+   Pandoc-style `{#id}` overrides on the heading line.
 5. Test the captured anchor against the slug set, case-sensitive.
-6. If absent, the reference is **broken with severity from the pattern**,
-   and the report includes a Levenshtein-1 suggestion when one exists
-   ("did you mean `#hashing`?").
+6. If absent, the reference is **broken** (verifier returns
+   `VerifyOutcome::AnchorNotFound`); the outcome includes a
+   Levenshtein-1 suggestion when one exists ("did you mean
+   `#hashing`?").
 
-For non-Markdown targets (`.html`, `.adoc`, `.rst`), the same algorithm
-applies with format-specific parsers; the slugifier table extends in
-v0.2 (open question §21). For unknown extensions, anchor verification
-is skipped with an `info` diagnostic so the file resolves but the
-anchor doesn't gate the run.
+v0.2 ships the `github` slugifier (the de-facto default for in-repo
+GitHub-rendered Markdown). The `pandoc` / `gitlab` / `hugo` /
+`mkdocs-material` choices parse from the schema but degrade to
+`Skipped` for now; they land in a follow-up. For non-Markdown
+extensions (`.html`, `.adoc`, `.rst`, `.txt`), anchor verification is
+also `Skipped` — the file still resolves; the anchor just doesn't
+gate the run. (Doctor's `anchor.skippedExt` info diagnostic is part of
+the §6.3.4 catalogue; the runtime currently surfaces the same fact via
+the `Skipped` outcome and a v0.3 PR wires the doctor diagnostic on
+top.)
 
 #### 6.3.4 Doctor checks
 
-| Check                      | Severity                      | Trigger                                                                                                      |
-| -------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `anchor.unknown`           | per-pattern `severity.broken` | Captured anchor absent from target's slug set.                                                               |
-| `anchor.styleMismatch`     | warning                       | Target contains Pandoc-style `{#id}` attributes but pattern's slugifier is `github` (or similar mismatches). |
-| `anchor.skippedExt`        | info                          | Target's extension has no anchor parser; anchor checking was skipped.                                        |
+| Check                      | Severity                      | Trigger                                                                                                                                                                   |
+| -------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `anchor.unknown`           | per-pattern `severity.broken` | Captured anchor absent from target's slug set. *Shipped in v0.2 as `VerifyOutcome::AnchorNotFound` (broken outcome in the check report) with a Levenshtein-1 suggestion.* |
+| `anchor.styleMismatch`     | warning                       | Target contains Pandoc-style `{#id}` attributes but pattern's slugifier is `github` (or similar mismatches). *v0.3 follow-up.*                                            |
+| `anchor.skippedExt`        | info                          | Target's extension has no anchor parser; anchor checking was skipped. *v0.2 surfaces it via the runtime `Skipped` outcome; the doctor diagnostic lands in v0.3.*          |
 
 #### 6.3.5 Why precise local checking matters
 

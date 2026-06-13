@@ -216,6 +216,67 @@ EXAMPLES
     coderef explain --report json 'JIRA(PROJ-1)' | jq '.matches[].target'
 ";
 
+pub const COMMIT_MSG_HELP: &str = "\
+USAGE
+    coderef commit-msg [OPTIONS] <file>
+    coderef commit-msg [OPTIONS] --stdin
+
+DESCRIPTION
+    Lint a commit message. Reads the file (or stdin), strips git's
+    `#`-comment lines, scans the remaining text with the configured
+    patterns, and verifies every match. Patterns with `kind: url` /
+    `local` participate by default; `block` / `ifchange` / `command`
+    are skipped (DESIGN §5.4.3 defaults).
+
+    Patterns can opt in / out per-pattern via `scope.commitMessage`:
+
+      true        — scan in commit messages (default for url/local).
+      false       — skip in commit messages.
+      \"required\"  — must produce at least one match; missing matches
+                    fail the lint.
+
+ARGUMENTS
+    <file>     Path to a commit-message file (e.g. `.git/COMMIT_EDITMSG`,
+               or whatever git passes to the `commit-msg` hook).
+
+OPTIONS
+    -c, --config <path>
+        Path to .coderef.jsonc. Defaults to ./.coderef.jsonc.
+
+    --report text|json
+        Output format. `text` (default) prints one line per matched
+        reference; `json` emits the `CommitMsgReport` for tooling.
+
+    --stdin
+        Read the commit message from standard input instead of <file>.
+        Mutually exclusive with <file>.
+
+    -h, --help
+        Show this help and exit.
+
+EXIT CODES
+    0  Clean lint: every match verified, every `required` pattern
+       produced at least one match.
+    1  At least one match broke OR a `required` pattern had no match.
+    2  Usage / config / read-error.
+    3  Output encoding error (when --report json is given).
+
+PRE-COMMIT HOOK
+    Wire as a `commit-msg`-stage hook. Example .pre-commit-config.yaml
+    entry:
+
+      - id: coderef-commit-msg
+        stages: [commit-msg]
+        entry: coderef commit-msg
+        language: system
+        pass_filenames: true
+
+EXAMPLES
+    coderef commit-msg .git/COMMIT_EDITMSG
+    git log -1 --format=%B HEAD | coderef commit-msg --stdin
+    coderef commit-msg --report json /tmp/msg | jq '.required_missing'
+";
+
 pub const CHANGES_HELP: &str = "\
 USAGE
     coderef changes [OPTIONS] [<root>]
@@ -318,6 +379,13 @@ OPTIONS
         Output format. `text` (default) is human-oriented; `json`
         emits the underlying `Config.patterns` map (or a single
         `Pattern` if <id> is given).
+
+    --by-category
+        Group patterns by their resolved (declared or inferred)
+        category, in DESIGN.md §5.7.3 display order
+        (files → people → tickets → standards → urls →
+        coupled-change → user-defined → other). Text-mode only; not
+        compatible with a specific <id>.
 
     -h, --help
         Show this help and exit.

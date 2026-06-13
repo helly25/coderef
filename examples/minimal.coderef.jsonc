@@ -8,6 +8,7 @@
 
   "patterns": {
     "todo-user": {
+      "category": "people",
       "regex":  "TODO\\(@(?<user>[a-zA-Z][\\w.-]{0,63})\\)",
       "target": "https://users.example.com/${user}",
       "title":  "User profile: ${user}",
@@ -17,12 +18,18 @@
     "docref": {
       "regex":  "DOCREF\\((?<path>/?[^)\\s#]+)(?:#(?<anchor>[^)\\s]+))?\\)",
       "kind":   "local",
-      "target": "${path}",
+      // Threading ${anchor} through the target enables Markdown anchor
+      // verification (DESIGN §6.3). DOCREF(/path) ⇒ "path#" (empty
+      // anchor, treated as no anchor); DOCREF(/path#heading) ⇒
+      // "path#heading" (heading must slug-match a heading in path).
+      "target": "${path}#${anchor}",
       "resolve": {
         "root":       "${workspaceFolder}",
         "anchorMode": "workspace",
         "extensions": [".md", ".mdx"],
-        "indexFiles": ["README.md"]
+        "indexFiles": ["README.md"],
+        "anchor":     "${anchor}",
+        "slugifier":  "github"
       }
     }
   },

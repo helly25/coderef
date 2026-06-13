@@ -45,6 +45,7 @@ fn main() -> ExitCode {
         Some("doctor") => cmd_doctor(args.collect()),
         Some("patterns") => cmd_patterns(args.collect()),
         Some("explain") => cmd_explain(args.collect()),
+        Some("commit-msg") => cmd_commit_msg(args.collect()),
         Some("changes") => cmd_changes(args.collect()),
         Some("help") => cmd_help(args.collect()),
         Some(other) => {
@@ -303,6 +304,16 @@ fn print_text_report(report: &coderef_core::check::CheckReport) {
             VerifyOutcome::BlockMarker { matched_text } => {
                 format!("  (block marker present: `{matched_text}`)")
             }
+            VerifyOutcome::AnchorNotFound {
+                path,
+                anchor,
+                suggestion,
+            } => match suggestion {
+                Some(s) => {
+                    format!("  (anchor `#{anchor}` not found in {path}; did you mean `#{s}`?)")
+                }
+                None => format!("  (anchor `#{anchor}` not found in {path})"),
+            },
             VerifyOutcome::Skipped { reason } => format!("  ({reason})"),
         };
         println!(
@@ -564,6 +575,7 @@ fn cmd_patterns(args: Vec<String>) -> ExitCode {
     let mut config_path: Option<String> = None;
     let mut report = Report::Text;
     let mut id: Option<String> = None;
+    let mut by_category = false;
 
     let mut it = args.into_iter();
     while let Some(arg) = it.next() {
@@ -591,6 +603,9 @@ fn cmd_patterns(args: Vec<String>) -> ExitCode {
                     }
                 };
             }
+            "--by-category" => {
+                by_category = true;
+            }
             "--help" | "-h" => {
                 print!("{}", help::PATTERNS_HELP);
                 return ExitCode::SUCCESS;
@@ -601,6 +616,11 @@ fn cmd_patterns(args: Vec<String>) -> ExitCode {
                 return ExitCode::from(2);
             }
         }
+    }
+
+    if by_category && id.is_some() {
+        eprintln!("coderef patterns: --by-category cannot be combined with a specific <id>");
+        return ExitCode::from(2);
     }
 
     let cfg_path = config_path.unwrap_or_else(|| "./.coderef.jsonc".into());
@@ -640,7 +660,11 @@ fn cmd_patterns(args: Vec<String>) -> ExitCode {
             }
         }
         (Report::Text, None) => {
-            print_patterns_summary(&cfg);
+            if by_category {
+                print_patterns_by_category(&cfg);
+            } else {
+                print_patterns_summary(&cfg);
+            }
             ExitCode::SUCCESS
         }
         (Report::Text, Some(name)) => {
@@ -652,6 +676,177 @@ fn cmd_patterns(args: Vec<String>) -> ExitCode {
             ExitCode::SUCCESS
         }
     }
+}
+
+/// `coderef commit-msg [--config <path>] [--report text|json] [--stdin] [<file>]`
+///
+/// Lint a commit message. Reads `<file>` (or stdin with `--stdin`),
+/// strips git's `#`-comment lines, runs the pattern engine over the
+/// remaining text, and verifies every match. `"required"` patterns
+/// (DESIGN §5.4.3) must produce at least one match each — missing
+/// matches make the command exit non-zero.
+fn cmd_commit_msg(args: Vec<String>) -> ExitCode {
+    let mut config_path: Option<String> = None;
+    let mut report = Report::Text;
+    let mut from_stdin = false;
+    let mut file: Option<String> = None;
+
+    let mut it = args.into_iter();
+    while let Some(arg) = it.next() {
+        match arg.as_str() {
+            "--config" | "-c" => {
+                let Some(path) = it.next() else {
+                    eprintln!("coderef commit-msg: --config requires a value");
+                    return ExitCode::from(2);
+                };
+                config_path = Some(path);
+            }
+            "--report" => {
+                let Some(kind) = it.next() else {
+                    eprintln!("coderef commit-msg: --report requires `text` or `json`");
+                    return ExitCode::from(2);
+                };
+                report = match kind.as_str() {
+                    "text" => Report::Text,
+                    "json" => Report::Json,
+                    other => {
+                        eprintln!(
+                            "coderef commit-msg: --report must be `text` or `json` (got `{other}`)"
+                        );
+                        return ExitCode::from(2);
+                    }
+                };
+            }
+            "--stdin" => {
+                from_stdin = true;
+            }
+            "--help" | "-h" => {
+                print!("{}", help::COMMIT_MSG_HELP);
+                return ExitCode::SUCCESS;
+            }
+            _ if file.is_none() => file = Some(arg),
+            _ => {
+                eprintln!("coderef commit-msg: unexpected argument `{arg}`");
+                return ExitCode::from(2);
+            }
+        }
+    }
+
+    if from_stdin && file.is_some() {
+        eprintln!("coderef commit-msg: --stdin and <file> are mutually exclusive");
+        return ExitCode::from(2);
+    }
+    let message = if from_stdin {
+        let mut buf = String::new();
+        if let Err(e) = std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf) {
+            eprintln!("coderef commit-msg: failed to read stdin: {e}");
+            return ExitCode::from(2);
+        }
+        buf
+    } else {
+        let Some(path) = file else {
+            eprintln!("coderef commit-msg: missing <file> (or pass --stdin)");
+            return ExitCode::from(2);
+        };
+        match std::fs::read_to_string(&path) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("coderef commit-msg: failed to read `{path}`: {e}");
+                return ExitCode::from(2);
+            }
+        }
+    };
+
+    let cfg_path = config_path.unwrap_or_else(|| "./.coderef.jsonc".into());
+    let cfg = match coderef_core::config::Config::from_file(&cfg_path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("coderef commit-msg: failed to load config `{cfg_path}`: {e}");
+            return ExitCode::from(2);
+        }
+    };
+
+    let opts = coderef_core::verify::VerifyOptions::default();
+    let report_value = match coderef_core::commit_msg::check_commit_message(&message, &cfg, &opts) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("coderef commit-msg: lint failed: {e}");
+            return ExitCode::from(2);
+        }
+    };
+
+    match report {
+        Report::Text => print_commit_msg_text(&report_value),
+        Report::Json => match serde_json::to_string_pretty(&report_value) {
+            Ok(s) => println!("{s}"),
+            Err(e) => {
+                eprintln!("coderef commit-msg: JSON encoding failed: {e}");
+                return ExitCode::from(3);
+            }
+        },
+    }
+
+    if report_value.passed() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(1)
+    }
+}
+
+fn print_commit_msg_text(report: &coderef_core::commit_msg::CommitMsgReport) {
+    use coderef_core::verify::VerifyOutcome;
+    for r in &report.results {
+        let prefix = match &r.outcome {
+            VerifyOutcome::Ok => "ok    ",
+            VerifyOutcome::Skipped { .. } => "skip  ",
+            VerifyOutcome::BlockMarker { .. } => "BLOCK ",
+            _ => "BROKEN",
+        };
+        let detail = match &r.outcome {
+            VerifyOutcome::Ok => String::new(),
+            VerifyOutcome::BrokenStatus { status } => format!("  (status {status})"),
+            VerifyOutcome::BrokenNetwork { reason } => format!("  ({reason})"),
+            VerifyOutcome::NotFound { path } => format!("  (no such file: {path})"),
+            VerifyOutcome::BlockMarker { matched_text } => {
+                format!("  (block marker present: `{matched_text}`)")
+            }
+            VerifyOutcome::AnchorNotFound {
+                path,
+                anchor,
+                suggestion,
+            } => match suggestion {
+                Some(s) => {
+                    format!("  (anchor `#{anchor}` not found in {path}; did you mean `#{s}`?)")
+                }
+                None => format!("  (anchor `#{anchor}` not found in {path})"),
+            },
+            VerifyOutcome::Skipped { reason } => format!("  ({reason})"),
+        };
+        println!(
+            "{prefix}  [{id}]  {text}  →  {target}{detail}",
+            id = r.reference.pattern_id,
+            text = r.reference.matched_text,
+            target = r.reference.target,
+        );
+    }
+    for m in &report.required_missing {
+        let desc = m
+            .description
+            .as_deref()
+            .map(|d| format!("  — {d}"))
+            .unwrap_or_default();
+        println!("REQUIRED missing: `{id}`{desc}", id = m.pattern_id);
+    }
+    println!();
+    println!(
+        "Lint result: {total} match(es), {ok} ok, {broken} broken, {skipped} skipped, \
+         {req} required missing",
+        total = report.total,
+        ok = report.ok,
+        broken = report.broken,
+        skipped = report.skipped,
+        req = report.required_missing.len(),
+    );
 }
 
 /// `coderef changes [--base <ref>] [--staged] [--config <path>] [--report text|json] [<root>]`
@@ -968,7 +1163,8 @@ fn print_patterns_summary(cfg: &coderef_core::config::Config) {
     println!("PATTERNS ({n})", n = cfg.patterns.len());
     println!();
     for (id, pat) in &cfg.patterns {
-        println!("  {id}");
+        let cat = resolved_category(pat);
+        println!("  {id}  [{cat}]");
         if let Some(desc) = &pat.description {
             for line in desc.lines() {
                 println!("    {line}");
@@ -979,7 +1175,64 @@ fn print_patterns_summary(cfg: &coderef_core::config::Config) {
         println!("    regex:  {regex}", regex = pat.regex);
         println!();
     }
-    println!("Use `coderef patterns <id>` for full details.");
+    println!("Use `coderef patterns <id>` for full details, or --by-category for grouped view.");
+}
+
+/// `--by-category` view: patterns grouped by their resolved (declared
+/// or inferred) category, with categories ordered per DESIGN.md §5.7.3.
+fn print_patterns_by_category(cfg: &coderef_core::config::Config) {
+    use std::collections::BTreeMap;
+    if cfg.patterns.is_empty() {
+        println!("(no patterns configured)");
+        return;
+    }
+    let mut groups: BTreeMap<String, Vec<(&String, &coderef_core::config::Pattern)>> =
+        BTreeMap::new();
+    for (id, pat) in &cfg.patterns {
+        groups
+            .entry(resolved_category(pat).into())
+            .or_default()
+            .push((id, pat));
+    }
+    let mut cats: Vec<&String> = groups.keys().collect();
+    cats.sort_by_key(|c| {
+        (
+            coderef_core::category::display_order(c.as_str()),
+            (*c).clone(),
+        )
+    });
+    println!(
+        "PATTERNS BY CATEGORY ({n} pattern(s) across {c} categor(y|ies))",
+        n = cfg.patterns.len(),
+        c = cats.len()
+    );
+    println!();
+    for c in cats {
+        let entries = &groups[c];
+        let inferred_flag = if coderef_core::category::BUILTIN_CATEGORIES.contains(&c.as_str()) {
+            ""
+        } else {
+            " (user-defined)"
+        };
+        println!("[{c}{inferred_flag}] — {n} pattern(s)", n = entries.len());
+        for (id, pat) in entries {
+            let inferred = pat.category.is_none();
+            let mark = if inferred { " (inferred)" } else { "" };
+            println!("  {id}{mark}");
+            if let Some(desc) = &pat.description {
+                for line in desc.lines() {
+                    println!("    {line}");
+                }
+            }
+        }
+        println!();
+    }
+}
+
+fn resolved_category(pat: &coderef_core::config::Pattern) -> &str {
+    pat.category
+        .as_deref()
+        .unwrap_or_else(|| coderef_core::category::infer_category(pat.kind))
 }
 
 fn print_pattern_detail(id: &str, pat: &coderef_core::config::Pattern) {
@@ -993,6 +1246,13 @@ fn print_pattern_detail(id: &str, pat: &coderef_core::config::Pattern) {
         println!();
     }
     println!("  Kind:     {kind:?}", kind = pat.kind);
+    let cat_resolved = resolved_category(pat);
+    let cat_note = if pat.category.is_none() {
+        " (inferred from kind)"
+    } else {
+        ""
+    };
+    println!("  Category: {cat_resolved}{cat_note}");
     println!("  Regex:    {regex}", regex = pat.regex);
     if let Some(target) = &pat.target {
         println!("  Target:   {target}");
