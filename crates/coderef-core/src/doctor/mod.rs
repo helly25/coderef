@@ -101,6 +101,7 @@ pub fn run_doctor(config: &Config) -> DoctorReport {
     for (id, pattern) in &config.patterns {
         self::checks::check_pattern(id, pattern, config, &mut diagnostics);
     }
+    self::checks::check_too_broad_other(config, &mut diagnostics);
     diagnostics.sort_by(|a, b| {
         // Errors first, then by check id, then by pattern id.
         b.severity
@@ -248,6 +249,99 @@ mod tests {
         assert_eq!(report.errors, 1);
         assert_eq!(report.diagnostics[0].check, "pattern.targetMissing");
         assert_eq!(report.diagnostics[0].pattern_id.as_deref(), Some("x"));
+    }
+
+    #[test]
+    fn test_doctor_category_unset_fires_for_url_kind_without_category() {
+        let cfg = cfg_jsonc(
+            r#"{ "patterns": { "x": {
+                "regex":  "TODO",
+                "target": "https://x.example/${0}"
+            } } }"#,
+        );
+        let report = run_doctor(&cfg);
+        let found = report
+            .diagnostics
+            .iter()
+            .any(|d| d.check == "category.unset" && d.severity == Severity::Info);
+        assert!(
+            found,
+            "expected category.unset info; got: {:#?}",
+            report.diagnostics
+        );
+    }
+
+    #[test]
+    fn test_doctor_category_unset_silent_for_url_with_category_declared() {
+        let cfg = cfg_jsonc(
+            r#"{ "patterns": { "x": {
+                "regex":    "TODO",
+                "target":   "https://x.example/y",
+                "category": "people"
+            } } }"#,
+        );
+        let report = run_doctor(&cfg);
+        assert!(report
+            .diagnostics
+            .iter()
+            .all(|d| d.check != "category.unset"));
+    }
+
+    #[test]
+    fn test_doctor_category_unset_silent_for_local_kind() {
+        // local kind infers to `files`, no suggestion needed.
+        let cfg = cfg_jsonc(
+            r#"{ "patterns": { "x": {
+                "kind":   "local",
+                "regex":  "DOCREF\\(([^)]+)\\)",
+                "target": "$1"
+            } } }"#,
+        );
+        let report = run_doctor(&cfg);
+        assert!(report
+            .diagnostics
+            .iter()
+            .all(|d| d.check != "category.unset"));
+    }
+
+    #[test]
+    fn test_doctor_too_broad_other_fires_above_default_ceiling() {
+        // Six patterns, all url + no category → all infer to `other`.
+        let cfg = cfg_jsonc(
+            r#"{ "patterns": {
+                "a": { "regex": "A", "target": "https://a" },
+                "b": { "regex": "B", "target": "https://b" },
+                "c": { "regex": "C", "target": "https://c" },
+                "d": { "regex": "D", "target": "https://d" },
+                "e": { "regex": "E", "target": "https://e" },
+                "f": { "regex": "F", "target": "https://f" }
+            } }"#,
+        );
+        let report = run_doctor(&cfg);
+        let found = report
+            .diagnostics
+            .iter()
+            .any(|d| d.check == "category.tooBroadOther" && d.severity == Severity::Info);
+        assert!(
+            found,
+            "expected category.tooBroadOther info; got: {:#?}",
+            report.diagnostics
+        );
+    }
+
+    #[test]
+    fn test_doctor_too_broad_other_silent_at_or_below_ceiling() {
+        let cfg = cfg_jsonc(
+            r#"{ "patterns": {
+                "a": { "regex": "A", "target": "https://a" },
+                "b": { "regex": "B", "target": "https://b" }
+            } }"#,
+        );
+        let report = run_doctor(&cfg);
+        assert!(report
+            .diagnostics
+            .iter()
+            .all(|d| d.check != "category.tooBroadOther"));
     }
 
     #[test]

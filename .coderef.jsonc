@@ -24,6 +24,7 @@
   "patterns": {
     "todo-user": {
       "description": "GitHub @user mention inside a TODO marker. Links the user to their GitHub profile so reviewers can resolve who owns a TODO without leaving the editor.",
+      "category": "people",
       "regex":  "TODO\\(@(?<user>[a-zA-Z][\\w.-]{0,38})\\)",
       "target": "https://github.com/${user}",
       "title":  "GitHub profile: ${user}",

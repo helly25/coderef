@@ -8,6 +8,7 @@
 
   "patterns": {
     "todo-user": {
+      "category": "people",
       "regex":  "TODO\\(@(?<user>[a-zA-Z][\\w.-]{0,63})\\)",
       "target": "https://users.example.com/${user}",
       "title":  "User profile: ${user}",

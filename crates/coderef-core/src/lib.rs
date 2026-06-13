@@ -13,6 +13,7 @@
 
 #![doc(html_root_url = "https://docs.rs/coderef-core/0.1.0")]
 
+pub mod category;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod check;
 pub mod comment;

@@ -563,6 +563,7 @@ fn cmd_patterns(args: Vec<String>) -> ExitCode {
     let mut config_path: Option<String> = None;
     let mut report = Report::Text;
     let mut id: Option<String> = None;
+    let mut by_category = false;
 
     let mut it = args.into_iter();
     while let Some(arg) = it.next() {
@@ -590,6 +591,9 @@ fn cmd_patterns(args: Vec<String>) -> ExitCode {
                     }
                 };
             }
+            "--by-category" => {
+                by_category = true;
+            }
             "--help" | "-h" => {
                 print!("{}", help::PATTERNS_HELP);
                 return ExitCode::SUCCESS;
@@ -600,6 +604,11 @@ fn cmd_patterns(args: Vec<String>) -> ExitCode {
                 return ExitCode::from(2);
             }
         }
+    }
+
+    if by_category && id.is_some() {
+        eprintln!("coderef patterns: --by-category cannot be combined with a specific <id>");
+        return ExitCode::from(2);
     }
 
     let cfg_path = config_path.unwrap_or_else(|| "./.coderef.jsonc".into());
@@ -639,7 +648,11 @@ fn cmd_patterns(args: Vec<String>) -> ExitCode {
             }
         }
         (Report::Text, None) => {
-            print_patterns_summary(&cfg);
+            if by_category {
+                print_patterns_by_category(&cfg);
+            } else {
+                print_patterns_summary(&cfg);
+            }
             ExitCode::SUCCESS
         }
         (Report::Text, Some(name)) => {
@@ -808,7 +821,8 @@ fn print_patterns_summary(cfg: &coderef_core::config::Config) {
     println!("PATTERNS ({n})", n = cfg.patterns.len());
     println!();
     for (id, pat) in &cfg.patterns {
-        println!("  {id}");
+        let cat = resolved_category(pat);
+        println!("  {id}  [{cat}]");
         if let Some(desc) = &pat.description {
             for line in desc.lines() {
                 println!("    {line}");
@@ -819,7 +833,64 @@ fn print_patterns_summary(cfg: &coderef_core::config::Config) {
         println!("    regex:  {regex}", regex = pat.regex);
         println!();
     }
-    println!("Use `coderef patterns <id>` for full details.");
+    println!("Use `coderef patterns <id>` for full details, or --by-category for grouped view.");
+}
+
+/// `--by-category` view: patterns grouped by their resolved (declared
+/// or inferred) category, with categories ordered per DESIGN.md §5.7.3.
+fn print_patterns_by_category(cfg: &coderef_core::config::Config) {
+    use std::collections::BTreeMap;
+    if cfg.patterns.is_empty() {
+        println!("(no patterns configured)");
+        return;
+    }
+    let mut groups: BTreeMap<String, Vec<(&String, &coderef_core::config::Pattern)>> =
+        BTreeMap::new();
+    for (id, pat) in &cfg.patterns {
+        groups
+            .entry(resolved_category(pat).into())
+            .or_default()
+            .push((id, pat));
+    }
+    let mut cats: Vec<&String> = groups.keys().collect();
+    cats.sort_by_key(|c| {
+        (
+            coderef_core::category::display_order(c.as_str()),
+            (*c).clone(),
+        )
+    });
+    println!(
+        "PATTERNS BY CATEGORY ({n} pattern(s) across {c} categor(y|ies))",
+        n = cfg.patterns.len(),
+        c = cats.len()
+    );
+    println!();
+    for c in cats {
+        let entries = &groups[c];
+        let inferred_flag = if coderef_core::category::BUILTIN_CATEGORIES.contains(&c.as_str()) {
+            ""
+        } else {
+            " (user-defined)"
+        };
+        println!("[{c}{inferred_flag}] — {n} pattern(s)", n = entries.len());
+        for (id, pat) in entries {
+            let inferred = pat.category.is_none();
+            let mark = if inferred { " (inferred)" } else { "" };
+            println!("  {id}{mark}");
+            if let Some(desc) = &pat.description {
+                for line in desc.lines() {
+                    println!("    {line}");
+                }
+            }
+        }
+        println!();
+    }
+}
+
+fn resolved_category(pat: &coderef_core::config::Pattern) -> &str {
+    pat.category
+        .as_deref()
+        .unwrap_or_else(|| coderef_core::category::infer_category(pat.kind))
 }
 
 fn print_pattern_detail(id: &str, pat: &coderef_core::config::Pattern) {
@@ -833,6 +904,13 @@ fn print_pattern_detail(id: &str, pat: &coderef_core::config::Pattern) {
         println!();
     }
     println!("  Kind:     {kind:?}", kind = pat.kind);
+    let cat_resolved = resolved_category(pat);
+    let cat_note = if pat.category.is_none() {
+        " (inferred from kind)"
+    } else {
+        ""
+    };
+    println!("  Category: {cat_resolved}{cat_note}");
     println!("  Regex:    {regex}", regex = pat.regex);
     if let Some(target) = &pat.target {
         println!("  Target:   {target}");
