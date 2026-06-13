@@ -277,6 +277,81 @@ EXAMPLES
     coderef commit-msg --report json /tmp/msg | jq '.required_missing'
 ";
 
+pub const CHANGES_HELP: &str = "\
+USAGE
+    coderef changes [OPTIONS] [<root>]
+
+DESCRIPTION
+    Three-pass coupled-change verifier (DESIGN §10.5). Scans the
+    workspace for IfChange/ThenChange marker pairs, overlays a git
+    diff, and reports every block touched by the diff whose required
+    peers (Shape B — same id across files) or targets (Shape A —
+    explicit `ThenChange(/path, /path:N, /path:N-M)` arguments) were
+    not also touched.
+
+    The default marker spelling is recognised in any language whose
+    line comments include the text `IfChange` / `ThenChange`:
+
+      # IfChange         // Python, shell, YAML
+      // IfChange         // C / Rust / Go / TS / JS
+      -- IfChange         // SQL / Haskell
+      <!-- IfChange -->   // HTML / Markdown (marker on its own line)
+
+    Each `IfChange` pairs with the *next* `ThenChange` in the same
+    file. A `ThenChange` with no arguments + `IfChange(id)` declares
+    a Shape B group: every block in the workspace with the same `id`
+    must change together. A `ThenChange(/path[, ...])` declares
+    Shape A targets that must change with this block.
+
+    v0.2 limitations (deferred to v0.3):
+      - Shape C composable ids (`IfChange(JIRA(PROJ-1))`).
+      - Glob targets / `{any}`/`{all}`/`{soft}` flags.
+      - Label sub-region targets (`/path:label-name`).
+      - Anchor targets (`/path#heading-slug`).
+
+ARGUMENTS
+    <root>     Workspace directory to scan. Defaults to `.`.
+
+OPTIONS
+    -c, --config <path>
+        Path to .coderef.jsonc. Defaults to <root>/.coderef.jsonc.
+
+    --staged
+        Diff staged changes (`git diff --cached`). Use this in the
+        `pre-commit` hook to verify what's about to be committed.
+
+    --base <ref>
+        Diff `<ref>..HEAD` instead of working-tree-vs-HEAD. Useful
+        for CI: `--base origin/main`.
+
+    --report text|json
+        Output format. `text` (default) prints violations + a one-line
+        summary; `json` emits the `ChangesReport` for tooling.
+
+    -h, --help
+        Show this help and exit.
+
+EXIT CODES
+    0  No violations and no parse errors.
+    1  At least one violation or parse error.
+    2  Usage / config / git error.
+    3  Output encoding error (when --report json is given).
+
+PRE-COMMIT HOOK
+    Wire as a `pre-commit`-stage hook:
+
+      - id: coderef-changes
+        stages: [pre-commit]
+        entry: coderef changes --staged
+        language: system
+        pass_filenames: false
+
+EXAMPLES
+    coderef changes
+    coderef changes --staged
+    coderef changes --base origin/main --report json | jq '.violations'
+";
+
 pub const PATTERNS_HELP: &str = "\
 USAGE
     coderef patterns [OPTIONS] [<id>]

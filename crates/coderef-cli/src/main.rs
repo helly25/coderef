@@ -46,6 +46,7 @@ fn main() -> ExitCode {
         Some("patterns") => cmd_patterns(args.collect()),
         Some("explain") => cmd_explain(args.collect()),
         Some("commit-msg") => cmd_commit_msg(args.collect()),
+        Some("changes") => cmd_changes(args.collect()),
         Some("help") => cmd_help(args.collect()),
         Some(other) => {
             eprintln!("coderef: unknown subcommand `{other}`");
@@ -809,6 +810,16 @@ fn print_commit_msg_text(report: &coderef_core::commit_msg::CommitMsgReport) {
             VerifyOutcome::BlockMarker { matched_text } => {
                 format!("  (block marker present: `{matched_text}`)")
             }
+            VerifyOutcome::AnchorNotFound {
+                path,
+                anchor,
+                suggestion,
+            } => match suggestion {
+                Some(s) => {
+                    format!("  (anchor `#{anchor}` not found in {path}; did you mean `#{s}`?)")
+                }
+                None => format!("  (anchor `#{anchor}` not found in {path})"),
+            },
             VerifyOutcome::Skipped { reason } => format!("  ({reason})"),
         };
         println!(
@@ -835,6 +846,165 @@ fn print_commit_msg_text(report: &coderef_core::commit_msg::CommitMsgReport) {
         broken = report.broken,
         skipped = report.skipped,
         req = report.required_missing.len(),
+    );
+}
+
+/// `coderef changes [--base <ref>] [--staged] [--config <path>] [--report text|json] [<root>]`
+///
+/// Runs the three-pass coupled-change verifier (DESIGN §10.5). Scans
+/// the workspace for IfChange/ThenChange blocks, overlays a git diff
+/// (`HEAD` by default, or `<base>..HEAD` with `--base`, or staged
+/// changes with `--staged`), and reports any block touched by the
+/// diff whose required peers/targets weren't also touched.
+#[allow(clippy::too_many_lines)] // arg parsing + dispatch is naturally long
+fn cmd_changes(args: Vec<String>) -> ExitCode {
+    let mut config_path: Option<String> = None;
+    let mut report = Report::Text;
+    let mut base: Option<String> = None;
+    let mut staged = false;
+    let mut root: Option<String> = None;
+
+    let mut it = args.into_iter();
+    while let Some(arg) = it.next() {
+        match arg.as_str() {
+            "--config" | "-c" => {
+                let Some(p) = it.next() else {
+                    eprintln!("coderef changes: --config requires a value");
+                    return ExitCode::from(2);
+                };
+                config_path = Some(p);
+            }
+            "--report" => {
+                let Some(k) = it.next() else {
+                    eprintln!("coderef changes: --report requires `text` or `json`");
+                    return ExitCode::from(2);
+                };
+                report = match k.as_str() {
+                    "text" => Report::Text,
+                    "json" => Report::Json,
+                    other => {
+                        eprintln!(
+                            "coderef changes: --report must be `text` or `json` (got `{other}`)"
+                        );
+                        return ExitCode::from(2);
+                    }
+                };
+            }
+            "--base" => {
+                let Some(b) = it.next() else {
+                    eprintln!("coderef changes: --base requires a value");
+                    return ExitCode::from(2);
+                };
+                base = Some(b);
+            }
+            "--staged" => staged = true,
+            "--help" | "-h" => {
+                print!("{}", help::CHANGES_HELP);
+                return ExitCode::SUCCESS;
+            }
+            _ if root.is_none() => root = Some(arg),
+            _ => {
+                eprintln!("coderef changes: unexpected argument `{arg}`");
+                return ExitCode::from(2);
+            }
+        }
+    }
+
+    let root = root.unwrap_or_else(|| ".".to_string());
+    let cfg_path =
+        config_path.unwrap_or_else(|| format!("{}/.coderef.jsonc", root.trim_end_matches('/')));
+    let cfg = match coderef_core::config::Config::from_file(&cfg_path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("coderef changes: failed to load config `{cfg_path}`: {e}");
+            return ExitCode::from(2);
+        }
+    };
+
+    if !coderef_core::ifchange::ifchange_enabled(&cfg) {
+        eprintln!(
+            "coderef changes: no `kind: \"ifchange\"` pattern in the config — \
+             declare one to enable coupled-change verification"
+        );
+        return ExitCode::from(2);
+    }
+
+    // 1. Scan the workspace for IfChange/ThenChange blocks.
+    let (blocks, parse_errors) = match coderef_core::ifchange::scan_workspace_blocks(&root, &cfg) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("coderef changes: scan failed: {e}");
+            return ExitCode::from(2);
+        }
+    };
+
+    // 2. Run git diff and parse it.
+    let mut git = std::process::Command::new("git");
+    git.arg("-C").arg(&root).arg("diff").arg("-U0");
+    if staged {
+        git.arg("--cached");
+    }
+    if let Some(b) = &base {
+        git.arg(format!("{b}..HEAD"));
+    }
+    let out = match git.output() {
+        Ok(o) => o,
+        Err(e) => {
+            eprintln!("coderef changes: failed to run `git diff`: {e}");
+            return ExitCode::from(2);
+        }
+    };
+    if !out.status.success() {
+        eprintln!(
+            "coderef changes: `git diff` exited {code}: {stderr}",
+            code = out.status.code().unwrap_or(-1),
+            stderr = String::from_utf8_lossy(&out.stderr).trim()
+        );
+        return ExitCode::from(2);
+    }
+    let diff_text = String::from_utf8_lossy(&out.stdout);
+    let changed = coderef_core::ifchange::parse_unified_diff(&diff_text);
+
+    // 3. Verify.
+    let r = coderef_core::ifchange::verify_changes(&blocks, &parse_errors, &changed);
+
+    match report {
+        Report::Text => print_changes_text(&r),
+        Report::Json => match serde_json::to_string_pretty(&r) {
+            Ok(s) => println!("{s}"),
+            Err(e) => {
+                eprintln!("coderef changes: JSON encoding failed: {e}");
+                return ExitCode::from(3);
+            }
+        },
+    }
+
+    if r.passed() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(1)
+    }
+}
+
+fn print_changes_text(r: &coderef_core::ifchange::ChangesReport) {
+    for v in &r.violations {
+        println!("[{kind}] {msg}", kind = v.kind, msg = v.message);
+    }
+    for e in &r.parse_errors {
+        println!("[parse-error/{kind}] {msg}", kind = e.kind, msg = e.message);
+    }
+    if !r.violations.is_empty() || !r.parse_errors.is_empty() {
+        println!();
+    }
+    println!(
+        "Changes report: {bc} block(s), {cc} changed, {vc} violating, {nv} no-verify. \
+         {vio} violation(s), {pe} parse-error(s).",
+        bc = r.block_count,
+        cc = r.changed_block_count,
+        vc = r.violating_block_count,
+        nv = r.no_verify_block_count,
+        vio = r.violations.len(),
+        pe = r.parse_errors.len(),
     );
 }
 

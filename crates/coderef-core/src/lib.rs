@@ -13,9 +13,9 @@
 
 #![doc(html_root_url = "https://docs.rs/coderef-core/0.1.0")]
 
-pub mod category;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod anchor;
+pub mod category;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod check;
 pub mod comment;
@@ -25,6 +25,8 @@ pub mod config;
 pub mod doctor;
 pub mod error;
 pub mod explain;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod ifchange;
 pub mod pattern;
 pub mod reference;
 pub mod scan;
