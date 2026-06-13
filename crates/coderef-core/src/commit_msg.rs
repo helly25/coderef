@@ -105,8 +105,9 @@ pub fn strip_commit_comments(raw: &str) -> String {
 /// Run the commit-message linter over `message`.
 ///
 /// `config` provides patterns + variables; `verify_opts` is reused
-/// from `coderef check` (timeout, accept_status, workspace root for
-/// any `kind: "local"` references that might appear in the message).
+/// from `coderef check` (timeout, `accept_status`, workspace root
+/// for any `kind: "local"` references that might appear in the
+/// message).
 pub fn check_commit_message(
     message: &str,
     config: &Config,
