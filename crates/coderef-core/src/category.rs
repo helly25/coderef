@@ -25,15 +25,16 @@ pub const BUILTIN_CATEGORIES: &[&str] = &[
     "other",
 ];
 
-/// Default `category` for a pattern that doesn't declare one,
-/// inferred from `kind` per DESIGN.md §5.7.2:
+/// Default `category` for a pattern that doesn't declare one.
 ///
-/// - `local`    → `files`
+/// Inferred from `kind` per DESIGN.md §5.7.2:
+///
+/// - `local` → `files`
 /// - `ifchange` → `coupled-change`
-/// - `block`    → `other` (block markers don't fit any cue-based bucket
-///                — they're absence-checked, not referenced)
-/// - `url`      → `other` (doctor's `category.unset` will suggest one)
-/// - `command`  → `other` (post-v0.4 backlog)
+/// - `block` → `other` (block markers don't fit any cue-based
+///   bucket — they're absence-checked, not referenced)
+/// - `url` → `other` (doctor's `category.unset` will suggest one)
+/// - `command` → `other` (post-v0.4 backlog)
 #[must_use]
 pub fn infer_category(kind: PatternKind) -> &'static str {
     match kind {
@@ -43,10 +44,12 @@ pub fn infer_category(kind: PatternKind) -> &'static str {
     }
 }
 
-/// Display-order index for a category. Built-ins use their position in
-/// `BUILTIN_CATEGORIES`; user-defined categories slot between
-/// `coupled-change` and `other` in alphabetical order. Used by the CLI
-/// `--by-category` view and (in v0.3+) the references browser.
+/// Display-order index for a category.
+///
+/// Built-ins use their position in `BUILTIN_CATEGORIES`; user-defined
+/// categories slot between `coupled-change` and `other` in
+/// alphabetical order. Used by the CLI `--by-category` view and
+/// (in v0.3+) the references browser.
 #[must_use]
 pub fn display_order(category: &str) -> u32 {
     if let Some(idx) = BUILTIN_CATEGORIES.iter().position(|c| *c == category) {
@@ -115,7 +118,7 @@ mod tests {
 
     #[test]
     fn test_display_order_builtins_sort_by_design_order() {
-        let mut got: Vec<&str> = BUILTIN_CATEGORIES.iter().copied().collect();
+        let mut got: Vec<&str> = BUILTIN_CATEGORIES.to_vec();
         got.sort_by_key(|c| display_order(c));
         assert_eq!(
             got,

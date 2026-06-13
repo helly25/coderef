@@ -1018,11 +1018,11 @@ alphabetical order; the position is configurable per category via
 
 #### 5.7.4 Doctor checks
 
-| Check                     | Severity | Trigger                                                                                                    |
-| ------------------------- | -------- | ---------------------------------------------------------------------------------------------------------- |
-| `category.unset`          | info     | `kind: "url"` pattern omits `category`. Doctor's hint lists the built-in names; the inferred fallback is `other`. *Shipped in v0.2.*                                                                                                                                          |
-| `category.mismatch`       | warning  | Captured values consistently start with a sigil (`@`, `/`, `http`) that contradicts the declared category. *Scan-dependent — designed; v0.3 deliverable alongside the references browser.*                                                                                  |
-| `category.tooBroadOther`  | info     | More than `integrity.maxOtherPatterns` (default 5) patterns share `category: "other"` after inference. *Shipped in v0.2; the workspace-level override knob lands with the visual editor in v0.3, the default ceiling is hard-coded for now.*                                |
+| Check                     | Severity | Trigger                                                                                                                                                                                                                                      |
+| ------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `category.unset`          | info     | `kind: "url"` pattern omits `category`. Doctor's hint lists the built-in names; the inferred fallback is `other`. *Shipped in v0.2.*                                                                                                         |
+| `category.mismatch`       | warning  | Captured values consistently start with a sigil (`@`, `/`, `http`) that contradicts the declared category. *Scan-dependent — designed; v0.3 deliverable alongside the references browser.*                                                   |
+| `category.tooBroadOther`  | info     | More than `integrity.maxOtherPatterns` (default 5) patterns share `category: "other"` after inference. *Shipped in v0.2; the workspace-level override knob lands with the visual editor in v0.3, the default ceiling is hard-coded for now.* |
 
 ### 5.8 Per-pattern editor styling (v0.3)
 

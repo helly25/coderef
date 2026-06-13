@@ -839,11 +839,11 @@ fn print_patterns_summary(cfg: &coderef_core::config::Config) {
 /// `--by-category` view: patterns grouped by their resolved (declared
 /// or inferred) category, with categories ordered per DESIGN.md §5.7.3.
 fn print_patterns_by_category(cfg: &coderef_core::config::Config) {
+    use std::collections::BTreeMap;
     if cfg.patterns.is_empty() {
         println!("(no patterns configured)");
         return;
     }
-    use std::collections::BTreeMap;
     let mut groups: BTreeMap<String, Vec<(&String, &coderef_core::config::Pattern)>> =
         BTreeMap::new();
     for (id, pat) in &cfg.patterns {
@@ -867,14 +867,12 @@ fn print_patterns_by_category(cfg: &coderef_core::config::Config) {
     println!();
     for c in cats {
         let entries = &groups[c];
-        let inferred_flag = if coderef_core::category::BUILTIN_CATEGORIES
-            .iter()
-            .any(|b| *b == c.as_str())
-        {
-            ""
-        } else {
-            " (user-defined)"
-        };
+        let inferred_flag =
+            if coderef_core::category::BUILTIN_CATEGORIES.contains(&c.as_str()) {
+                ""
+            } else {
+                " (user-defined)"
+            };
         println!("[{c}{inferred_flag}] — {n} pattern(s)", n = entries.len());
         for (id, pat) in entries {
             let inferred = pat.category.is_none();
