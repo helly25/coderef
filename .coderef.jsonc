@@ -57,7 +57,14 @@
           "crates/coderef-core/tests/check_pipeline.rs",
           // commands.ts has DOCREF(/docs/x.md) as an InputBox prompt
           // example — illustrative, not a real ref.
-          "extension/src/commands.ts"
+          "extension/src/commands.ts",
+          // scan/file.rs has a `DOCREF(/path)` example in a doc
+          // comment explaining how empty captures resolve.
+          "crates/coderef-core/src/scan/file.rs",
+          // anchor_verification integration test has `DOCREF(/docs/x.md)`
+          // in fixture string literals (the test plants them on
+          // disk for the verifier to scan).
+          "crates/coderef-core/tests/anchor_verification.rs"
         ]
       }
     }

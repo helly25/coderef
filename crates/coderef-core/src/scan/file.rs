@@ -85,12 +85,20 @@ pub fn scan_file(content: &str, opts: &ScanOptions) -> Result<Vec<Reference>, Sc
                 continue;
             }
 
-            // Extract named captures.
+            // Extract named captures. Declared-but-unmatched named
+            // captures (e.g. an optional group like `(?:#(?<anchor>X))?`
+            // that didn't fire) resolve as empty strings rather than
+            // unresolved variables — this matches DESIGN.md §6.3's
+            // "omitting the anchor in the reference itself is the
+            // opt-out" semantics, and lets a single pattern carry
+            // both `DOCREF(/path)` and `DOCREF(/path#anchor)` forms.
             let mut caps_map = IndexMap::new();
             for name in compiled.regex.capture_names().flatten() {
-                if let Some(c) = captures.name(name) {
-                    caps_map.insert(name.to_string(), c.as_str().to_string());
-                }
+                let value = captures
+                    .name(name)
+                    .map(|c| c.as_str().to_string())
+                    .unwrap_or_default();
+                caps_map.insert(name.to_string(), value);
             }
 
             // Build per-match context (base + captures).

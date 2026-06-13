@@ -39,6 +39,14 @@ pub enum VerifyOutcome {
     /// is itself the failure (e.g. `DO NOT COMMIT`, `NOCOMMIT`,
     /// `DONOTMERGE`). `matched_text` is the literal token that matched.
     BlockMarker { matched_text: String },
+    /// Local-path target resolved, but its `#anchor` suffix didn't
+    /// match any heading slug in the target file (DESIGN.md §6.3).
+    /// `suggestion` carries the Levenshtein-1 hit when one exists.
+    AnchorNotFound {
+        path: String,
+        anchor: String,
+        suggestion: Option<String>,
+    },
     /// Kind not yet implemented or verification turned off.
     Skipped { reason: String },
 }

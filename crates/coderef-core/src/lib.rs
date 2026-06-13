@@ -15,6 +15,8 @@
 
 pub mod category;
 #[cfg(not(target_arch = "wasm32"))]
+pub mod anchor;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod check;
 pub mod comment;
 pub mod config;
