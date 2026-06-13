@@ -20,6 +20,8 @@ pub mod config;
 pub mod doctor;
 pub mod error;
 pub mod explain;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod ifchange;
 pub mod pattern;
 pub mod reference;
 pub mod scan;

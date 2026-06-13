@@ -37,17 +37,10 @@ impl CompiledPattern {
         let id = id.into();
         let kind = raw.kind;
 
-        // v0.1 supports url + local. v0.2 adds block; ifchange/command
-        // are still placeholders.
+        // v0.1 supports url + local. v0.2 adds block + ifchange;
+        // command is still a placeholder.
         match kind {
-            PatternKind::Url | PatternKind::Local | PatternKind::Block => {}
-            PatternKind::IfChange => {
-                return Err(PatternError::KindNotYetImplemented {
-                    id,
-                    kind: "ifchange".into(),
-                    expected_version: "v0.2".into(),
-                });
-            }
+            PatternKind::Url | PatternKind::Local | PatternKind::Block | PatternKind::IfChange => {}
             PatternKind::Command => {
                 return Err(PatternError::KindNotYetImplemented {
                     id,
@@ -59,11 +52,13 @@ impl CompiledPattern {
 
         // Target requirements differ by kind:
         // - url / local: single-target required (v0.1 contract; multi-target is v0.3).
-        // - block: target is meaningless (the match itself is the diagnostic).
-        //   Accept `target: null` and ignore `target` if set. `targets[]`
-        //   is still rejected to keep the schema unambiguous.
+        // - block / ifchange: target template is irrelevant — the
+        //   match itself (block) or peer/target lookup at diff-time
+        //   (ifchange) is what verifies. Accept `target: null` and
+        //   ignore `target` if set. `targets[]` is rejected for
+        //   these kinds to keep the schema unambiguous.
         let target_template = match kind {
-            PatternKind::Block => {
+            PatternKind::Block | PatternKind::IfChange => {
                 if !raw.targets.is_empty() {
                     return Err(PatternError::BlockKindCannotHaveTargets { id });
                 }
@@ -216,18 +211,18 @@ mod tests {
     }
 
     #[test]
-    fn test_compile_ifchange_kind_returns_not_yet_implemented() {
+    fn test_compile_ifchange_kind_succeeds_without_target_and_ignores_stray_target() {
+        // ifchange compiles like block — no target needed; a stray
+        // `target` field is accepted but does nothing at scan time.
         let p = Pattern {
             regex: "X".into(),
-            target: Some("a".into()),
+            target: Some("ignored".into()),
             kind: PatternKind::IfChange,
             ..Default::default()
         };
-        let err = CompiledPattern::compile("ifc", &p).unwrap_err();
-        assert!(matches!(
-            err,
-            PatternError::KindNotYetImplemented { ref kind, .. } if kind == "ifchange"
-        ));
+        let c = CompiledPattern::compile("ifc", &p).unwrap();
+        assert_eq!(c.kind, PatternKind::IfChange);
+        assert_eq!(c.target_template, "");
     }
 
     #[test]
