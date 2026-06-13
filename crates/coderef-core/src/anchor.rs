@@ -53,12 +53,21 @@ pub fn verify_anchor(file_path: &Path, anchor: &str, slugifier: Option<&str>) ->
         };
     }
 
-    // Slugifier dispatch. v0.2 ships only github; the other names land
-    // in a follow-up.
+    // Slugifier dispatch. v0.2 ships `github` (the default + most
+    // common), `pandoc`, `gitlab`, `hugo`, and `mkdocs-material`. An
+    // unrecognised name still scans the file but falls back to
+    // github-style slugs — surfaced via the `Skipped` outcome with a
+    // descriptive reason so authors notice the typo.
     let slug = slugifier.unwrap_or("github");
-    if slug != "github" {
+    if !matches!(
+        slug,
+        "github" | "pandoc" | "gitlab" | "hugo" | "mkdocs-material"
+    ) {
         return AnchorOutcome::Skipped {
-            reason: format!("slugifier `{slug}` not implemented in v0.2; only `github` is wired"),
+            reason: format!(
+                "slugifier `{slug}` not recognised; supported: \
+                 github, pandoc, gitlab, hugo, mkdocs-material"
+            ),
         };
     }
 
@@ -71,7 +80,9 @@ pub fn verify_anchor(file_path: &Path, anchor: &str, slugifier: Option<&str>) ->
         }
     };
     let headings = extract_headings(&content);
-    let slugs: Vec<String> = headings.iter().map(|h| h.anchor.clone()).collect();
+    // Use the configured slugifier; Heading::slug honours explicit_id
+    // unconditionally and only slugifies the text when no override.
+    let slugs: Vec<String> = headings.iter().map(|h| h.slug(slug)).collect();
     if slugs.iter().any(|s| s == anchor) {
         AnchorOutcome::Found
     } else {
@@ -82,14 +93,51 @@ pub fn verify_anchor(file_path: &Path, anchor: &str, slugifier: Option<&str>) ->
     }
 }
 
-/// One heading found in a Markdown source. `anchor` is the resolved
-/// slug — either the explicit `{#id}` if present, or the slugified
-/// heading text.
+/// One heading found in a Markdown source.
+///
+/// `anchor` is the *github-slugified* form of `text` (kept so the
+/// old API stays callable). For per-slugifier anchor lookups,
+/// `Heading::slug(slugifier)` re-computes the slug on demand,
+/// preferring `explicit_id` (Pandoc `{#id}` override) when present.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Heading {
     pub level: u8,
     pub text: String,
     pub anchor: String,
+    /// `Some("custom-id")` when the heading line ended with
+    /// `{#custom-id}` (Pandoc-style explicit anchor override).
+    /// `None` when the slug should be derived from `text`.
+    pub explicit_id: Option<String>,
+}
+
+impl Heading {
+    /// Resolve this heading's anchor under the given slugifier name.
+    /// `explicit_id` always wins; otherwise the slugifier is applied
+    /// to `text`. Unknown slugifier names fall through to `github`.
+    #[must_use]
+    pub fn slug(&self, slugifier: &str) -> String {
+        if let Some(id) = self.explicit_id.as_deref() {
+            return id.to_string();
+        }
+        slugify(&self.text, slugifier)
+    }
+}
+
+/// Slugify `text` per the named algorithm.
+///
+/// Unknown names fall back to `github` (and surface no diagnostic —
+/// the named-slugifier dispatch in `verify_anchor` is the place that
+/// says "I didn't recognise this"; this helper is just a pure
+/// mapping).
+#[must_use]
+pub fn slugify(text: &str, slugifier: &str) -> String {
+    match slugifier {
+        "pandoc" => pandoc_slug(text),
+        "gitlab" => gitlab_slug(text),
+        "hugo" => hugo_slug(text),
+        "mkdocs-material" => mkdocs_material_slug(text),
+        _ => github_slug(text),
+    }
 }
 
 /// Extract all ATX headings (`#`-prefixed) from `content`. Skips
@@ -143,11 +191,14 @@ pub fn extract_headings(content: &str) -> Vec<Heading> {
         // containing literal `{` doesn't false-match.
         let (text, explicit_id) = split_explicit_id(text_part);
         let level = u8::try_from(leading_hashes).unwrap_or(1);
-        let anchor = explicit_id.unwrap_or_else(|| github_slug(&text));
+        let anchor = explicit_id
+            .as_deref()
+            .map_or_else(|| github_slug(&text), str::to_string);
         out.push(Heading {
             level,
             text,
             anchor,
+            explicit_id,
         });
     }
     out
@@ -173,16 +224,16 @@ fn split_explicit_id(text: &str) -> (String, Option<String>) {
     (head_text, Some(body.to_string()))
 }
 
-/// GitHub-flavoured slug. The algorithm GitHub's web renderer uses for
-/// heading anchors:
+/// GitHub-flavoured slug.
 ///
 /// 1. Lowercase.
 /// 2. Drop every character that isn't ASCII alphanumeric, space,
 ///    hyphen, or underscore.
 /// 3. Replace spaces with hyphens.
 ///
-/// Tested with the canonical example `## My Heading & v2.0!` →
-/// `my-heading--v20` (DESIGN.md §6.3.2).
+/// Canonical example (DESIGN §6.3.2): `## My Heading & v2.0!` →
+/// `my-heading--v20`. Consecutive hyphens are preserved — that's
+/// GitHub's behaviour for adjacent dropped characters.
 #[must_use]
 pub fn github_slug(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
@@ -196,6 +247,89 @@ pub fn github_slug(text: &str) -> String {
         // Everything else (punctuation, &, !, ., etc.) is dropped.
     }
     out
+}
+
+/// Pandoc-flavoured slug.
+///
+/// Pandoc's `auto_identifiers` rule: lowercase; strip everything that
+/// isn't a letter, digit, hyphen, underscore, or space; collapse
+/// runs of spaces *and* runs of consecutive non-word characters into
+/// a single hyphen; trim leading/trailing hyphens.
+///
+/// Canonical example (DESIGN §6.3.2): `## My Heading & v2.0!` →
+/// `my-heading-v20` (single hyphen between `heading` and `v20`,
+/// versus github's double).
+#[must_use]
+pub fn pandoc_slug(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut last_was_hyphen = false;
+    for c in text.chars() {
+        let lc = c.to_ascii_lowercase();
+        if lc.is_ascii_alphanumeric() || lc == '_' {
+            out.push(lc);
+            last_was_hyphen = false;
+        } else if (lc == ' ' || lc == '-') && !last_was_hyphen && !out.is_empty() {
+            out.push('-');
+            last_was_hyphen = true;
+        }
+        // Everything else is dropped without inserting a separator.
+    }
+    // Trim trailing hyphen.
+    while out.ends_with('-') {
+        out.pop();
+    }
+    out
+}
+
+/// GitLab-flavoured slug.
+///
+/// GitLab renders any non-alphanumeric run as a single hyphen, and
+/// preserves embedded digits and periods alike (so `v2.0` becomes
+/// `v2-0`, not `v20`). Trims leading/trailing hyphens.
+///
+/// Canonical example (DESIGN §6.3.2): `## My Heading & v2.0!` →
+/// `my-heading-v2-0`.
+#[must_use]
+pub fn gitlab_slug(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut last_was_hyphen = false;
+    for c in text.chars() {
+        let lc = c.to_ascii_lowercase();
+        if lc.is_ascii_alphanumeric() || lc == '_' {
+            out.push(lc);
+            last_was_hyphen = false;
+        } else if !last_was_hyphen && !out.is_empty() {
+            out.push('-');
+            last_was_hyphen = true;
+        }
+    }
+    while out.ends_with('-') {
+        out.pop();
+    }
+    out
+}
+
+/// Hugo-flavoured slug.
+///
+/// Hugo (with default `[markup.tableOfContents]` and goldmark) uses
+/// the same algorithm as GitLab in the spec's canonical example, so
+/// we share the implementation.
+#[must_use]
+pub fn hugo_slug(text: &str) -> String {
+    gitlab_slug(text)
+}
+
+/// MkDocs-Material-flavoured slug.
+///
+/// MkDocs-Material (via `pymdown-extensions`'s default slugifier)
+/// matches GitHub-style: drop punctuation entirely, replace spaces
+/// with hyphens, preserve consecutive hyphens.
+///
+/// Canonical example (DESIGN §6.3.2): `## My Heading & v2.0!` →
+/// `my-heading--v20`.
+#[must_use]
+pub fn mkdocs_material_slug(text: &str) -> String {
+    github_slug(text)
 }
 
 /// Levenshtein-distance-1 match against `candidates`, returning the
@@ -285,6 +419,79 @@ mod tests {
     #[test]
     fn test_github_slug_preserves_underscores() {
         assert_eq!(github_slug("snake_case_heading"), "snake_case_heading");
+    }
+
+    #[test]
+    fn test_pandoc_slug_canonical_design_example() {
+        // DESIGN.md §6.3.2 canonical example.
+        assert_eq!(pandoc_slug("My Heading & v2.0!"), "my-heading-v20");
+    }
+
+    #[test]
+    fn test_pandoc_slug_collapses_consecutive_separators() {
+        // `My  Heading` (two spaces) and `My - Heading` (space-dash-space)
+        // both collapse to a single hyphen.
+        assert_eq!(pandoc_slug("My  Heading"), "my-heading");
+        assert_eq!(pandoc_slug("My - Heading"), "my-heading");
+    }
+
+    #[test]
+    fn test_pandoc_slug_trims_trailing_hyphens() {
+        assert_eq!(pandoc_slug("Hello world!!!"), "hello-world");
+    }
+
+    #[test]
+    fn test_gitlab_slug_canonical_design_example() {
+        assert_eq!(gitlab_slug("My Heading & v2.0!"), "my-heading-v2-0");
+    }
+
+    #[test]
+    fn test_gitlab_slug_period_becomes_hyphen() {
+        // Unlike github (drops `.`), gitlab inserts a separator.
+        assert_eq!(gitlab_slug("v2.0"), "v2-0");
+    }
+
+    #[test]
+    fn test_hugo_slug_matches_gitlab_canonical_example() {
+        // DESIGN §6.3.2 lists hugo and gitlab with identical output.
+        assert_eq!(hugo_slug("My Heading & v2.0!"), "my-heading-v2-0");
+    }
+
+    #[test]
+    fn test_mkdocs_material_slug_matches_github_canonical_example() {
+        // DESIGN §6.3.2 lists mkdocs-material and github with identical output.
+        assert_eq!(
+            mkdocs_material_slug("My Heading & v2.0!"),
+            "my-heading--v20"
+        );
+    }
+
+    #[test]
+    fn test_slugify_dispatches_to_each_named_slugifier() {
+        let t = "My Heading & v2.0!";
+        assert_eq!(slugify(t, "github"), "my-heading--v20");
+        assert_eq!(slugify(t, "pandoc"), "my-heading-v20");
+        assert_eq!(slugify(t, "gitlab"), "my-heading-v2-0");
+        assert_eq!(slugify(t, "hugo"), "my-heading-v2-0");
+        assert_eq!(slugify(t, "mkdocs-material"), "my-heading--v20");
+    }
+
+    #[test]
+    fn test_slugify_unknown_name_falls_back_to_github() {
+        assert_eq!(slugify("My Heading", "unknown-slug"), "my-heading");
+    }
+
+    #[test]
+    fn test_heading_slug_honours_explicit_id_under_any_slugifier() {
+        let h = Heading {
+            level: 2,
+            text: "My Heading".into(),
+            anchor: "my-heading".into(),
+            explicit_id: Some("custom-id".into()),
+        };
+        assert_eq!(h.slug("github"), "custom-id");
+        assert_eq!(h.slug("pandoc"), "custom-id");
+        assert_eq!(h.slug("gitlab"), "custom-id");
     }
 
     #[test]
@@ -381,12 +588,45 @@ mod tests {
     }
 
     #[test]
-    fn test_verify_anchor_non_github_slugifier_skipped_for_now() {
+    fn test_verify_anchor_pandoc_resolves_with_pandoc_slug() {
+        // The heading `## v2.0 Notes` produces different slugs:
+        //   github  → `v20-notes`
+        //   pandoc  → `v20-notes` (same as github for this example)
+        //   gitlab  → `v2-0-notes`
+        // We hand the verifier the pandoc-form anchor; only the
+        // pandoc slugifier should resolve it.
         let dir = tempdir("pandoc");
         let md = dir.join("doc.md");
+        std::fs::write(&md, "## v2.0 Notes\n").unwrap();
+        assert_eq!(
+            verify_anchor(&md, "v20-notes", Some("pandoc")),
+            AnchorOutcome::Found
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_verify_anchor_gitlab_resolves_with_gitlab_slug() {
+        let dir = tempdir("gitlab");
+        let md = dir.join("doc.md");
+        std::fs::write(&md, "## v2.0 Notes\n").unwrap();
+        assert_eq!(
+            verify_anchor(&md, "v2-0-notes", Some("gitlab")),
+            AnchorOutcome::Found
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_verify_anchor_unknown_slugifier_skipped_with_supported_list() {
+        let dir = tempdir("unknown");
+        let md = dir.join("doc.md");
         std::fs::write(&md, "# X\n").unwrap();
-        match verify_anchor(&md, "x", Some("pandoc")) {
-            AnchorOutcome::Skipped { reason } => assert!(reason.contains("pandoc")),
+        match verify_anchor(&md, "x", Some("kramdown")) {
+            AnchorOutcome::Skipped { reason } => {
+                assert!(reason.contains("kramdown"));
+                assert!(reason.contains("supported"));
+            }
             other => panic!("expected Skipped, got {other:?}"),
         }
         std::fs::remove_dir_all(&dir).unwrap();
