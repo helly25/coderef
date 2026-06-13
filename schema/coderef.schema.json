@@ -355,10 +355,47 @@
           "description": "Full prefix policy (v0.2; §5.4.2). Accepted for forward compat."
         },
         "commitMessage": {
-          "description": "Commit-message scope (v0.2; §5.4.3). Accepted for forward compat. Either a boolean or the string `\"required\"`."
+          "description": "Commit-message scope (§5.4.3). `true` / `false` / `\"required\"`. `None` = use the kind-based default (`true` for url/local; `false` for ifchange/block/command).",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/CommitMessageScope"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "additionalProperties": false
+    },
+    "CommitMessageScope": {
+      "description": "Per-pattern commit-message scope. See `DESIGN.md` §5.4.3.",
+      "anyOf": [
+        {
+          "description": "`true` — pattern scans commit messages. `false` — pattern does NOT scan commit messages.",
+          "type": "boolean"
+        },
+        {
+          "description": "`\"required\"` — every commit message must contain at least one match of this pattern. Missing matches are reported as a `commitMessageMissing` diagnostic on the pattern.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/CommitMessageTag"
+            }
+          ]
+        }
+      ]
+    },
+    "CommitMessageTag": {
+      "description": "String tag for `CommitMessageScope::Tag`. Single-variant enum so serde can distinguish it from `Bool` in the untagged form.",
+      "oneOf": [
+        {
+          "description": "`\"required\"` — pattern must match every commit message.",
+          "type": "string",
+          "enum": [
+            "required"
+          ]
+        }
+      ]
     },
     "ActionsConfig": {
       "description": "Per-pattern action overrides (open / preview / verify). See `DESIGN.md` §5.3.",

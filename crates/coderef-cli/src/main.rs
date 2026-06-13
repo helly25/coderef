@@ -45,6 +45,7 @@ fn main() -> ExitCode {
         Some("doctor") => cmd_doctor(args.collect()),
         Some("patterns") => cmd_patterns(args.collect()),
         Some("explain") => cmd_explain(args.collect()),
+        Some("commit-msg") => cmd_commit_msg(args.collect()),
         Some("help") => cmd_help(args.collect()),
         Some(other) => {
             eprintln!("coderef: unknown subcommand `{other}`");
@@ -674,6 +675,167 @@ fn cmd_patterns(args: Vec<String>) -> ExitCode {
             ExitCode::SUCCESS
         }
     }
+}
+
+/// `coderef commit-msg [--config <path>] [--report text|json] [--stdin] [<file>]`
+///
+/// Lint a commit message. Reads `<file>` (or stdin with `--stdin`),
+/// strips git's `#`-comment lines, runs the pattern engine over the
+/// remaining text, and verifies every match. `"required"` patterns
+/// (DESIGN §5.4.3) must produce at least one match each — missing
+/// matches make the command exit non-zero.
+fn cmd_commit_msg(args: Vec<String>) -> ExitCode {
+    let mut config_path: Option<String> = None;
+    let mut report = Report::Text;
+    let mut from_stdin = false;
+    let mut file: Option<String> = None;
+
+    let mut it = args.into_iter();
+    while let Some(arg) = it.next() {
+        match arg.as_str() {
+            "--config" | "-c" => {
+                let Some(path) = it.next() else {
+                    eprintln!("coderef commit-msg: --config requires a value");
+                    return ExitCode::from(2);
+                };
+                config_path = Some(path);
+            }
+            "--report" => {
+                let Some(kind) = it.next() else {
+                    eprintln!("coderef commit-msg: --report requires `text` or `json`");
+                    return ExitCode::from(2);
+                };
+                report = match kind.as_str() {
+                    "text" => Report::Text,
+                    "json" => Report::Json,
+                    other => {
+                        eprintln!(
+                            "coderef commit-msg: --report must be `text` or `json` (got `{other}`)"
+                        );
+                        return ExitCode::from(2);
+                    }
+                };
+            }
+            "--stdin" => {
+                from_stdin = true;
+            }
+            "--help" | "-h" => {
+                print!("{}", help::COMMIT_MSG_HELP);
+                return ExitCode::SUCCESS;
+            }
+            _ if file.is_none() => file = Some(arg),
+            _ => {
+                eprintln!("coderef commit-msg: unexpected argument `{arg}`");
+                return ExitCode::from(2);
+            }
+        }
+    }
+
+    if from_stdin && file.is_some() {
+        eprintln!("coderef commit-msg: --stdin and <file> are mutually exclusive");
+        return ExitCode::from(2);
+    }
+    let message = if from_stdin {
+        let mut buf = String::new();
+        if let Err(e) = std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf) {
+            eprintln!("coderef commit-msg: failed to read stdin: {e}");
+            return ExitCode::from(2);
+        }
+        buf
+    } else {
+        let Some(path) = file else {
+            eprintln!("coderef commit-msg: missing <file> (or pass --stdin)");
+            return ExitCode::from(2);
+        };
+        match std::fs::read_to_string(&path) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("coderef commit-msg: failed to read `{path}`: {e}");
+                return ExitCode::from(2);
+            }
+        }
+    };
+
+    let cfg_path = config_path.unwrap_or_else(|| "./.coderef.jsonc".into());
+    let cfg = match coderef_core::config::Config::from_file(&cfg_path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("coderef commit-msg: failed to load config `{cfg_path}`: {e}");
+            return ExitCode::from(2);
+        }
+    };
+
+    let opts = coderef_core::verify::VerifyOptions::default();
+    let report_value = match coderef_core::commit_msg::check_commit_message(&message, &cfg, &opts) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("coderef commit-msg: lint failed: {e}");
+            return ExitCode::from(2);
+        }
+    };
+
+    match report {
+        Report::Text => print_commit_msg_text(&report_value),
+        Report::Json => match serde_json::to_string_pretty(&report_value) {
+            Ok(s) => println!("{s}"),
+            Err(e) => {
+                eprintln!("coderef commit-msg: JSON encoding failed: {e}");
+                return ExitCode::from(3);
+            }
+        },
+    }
+
+    if report_value.passed() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(1)
+    }
+}
+
+fn print_commit_msg_text(report: &coderef_core::commit_msg::CommitMsgReport) {
+    use coderef_core::verify::VerifyOutcome;
+    for r in &report.results {
+        let prefix = match &r.outcome {
+            VerifyOutcome::Ok => "ok    ",
+            VerifyOutcome::Skipped { .. } => "skip  ",
+            VerifyOutcome::BlockMarker { .. } => "BLOCK ",
+            _ => "BROKEN",
+        };
+        let detail = match &r.outcome {
+            VerifyOutcome::Ok => String::new(),
+            VerifyOutcome::BrokenStatus { status } => format!("  (status {status})"),
+            VerifyOutcome::BrokenNetwork { reason } => format!("  ({reason})"),
+            VerifyOutcome::NotFound { path } => format!("  (no such file: {path})"),
+            VerifyOutcome::BlockMarker { matched_text } => {
+                format!("  (block marker present: `{matched_text}`)")
+            }
+            VerifyOutcome::Skipped { reason } => format!("  ({reason})"),
+        };
+        println!(
+            "{prefix}  [{id}]  {text}  →  {target}{detail}",
+            id = r.reference.pattern_id,
+            text = r.reference.matched_text,
+            target = r.reference.target,
+        );
+    }
+    for m in &report.required_missing {
+        let desc = m
+            .description
+            .as_deref()
+            .map(|d| format!("  — {d}"))
+            .unwrap_or_default();
+        println!("REQUIRED missing: `{id}`{desc}", id = m.pattern_id);
+    }
+    println!();
+    println!(
+        "Lint result: {total} match(es), {ok} ok, {broken} broken, {skipped} skipped, \
+         {req} required missing",
+        total = report.total,
+        ok = report.ok,
+        broken = report.broken,
+        skipped = report.skipped,
+        req = report.required_missing.len(),
+    );
 }
 
 /// `coderef explain [--config <path>] [--report text|json] <input>`
