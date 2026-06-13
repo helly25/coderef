@@ -18,7 +18,10 @@ mod verify;
 
 pub use self::pattern::{ActionConfig, ActionsConfig, Pattern, PatternKind, TargetSpec};
 pub use self::resolve::{AnchorMode, CaseSensitivity, LocalResolveConfig};
-pub use self::scope::{CommitMessageScope, CommitMessageTag, ScopeConfig};
+pub use self::scope::{
+    resolve_commit_message_scope, CommitMessageScope, CommitMessageTag,
+    EffectiveCommitMessageScope, ScopeConfig,
+};
 pub use self::verify::VerifyToggle;
 
 use indexmap::IndexMap;

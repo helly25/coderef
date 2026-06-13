@@ -13,7 +13,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::check::CheckResult;
-use crate::config::{CommitMessageScope, CommitMessageTag, Config, Pattern, PatternKind};
+use crate::config::{Config, Pattern};
 use crate::pattern::CompiledPattern;
 use crate::scan::{scan_file, ScanError, ScanOptions};
 use crate::variables::Context;
@@ -56,33 +56,12 @@ pub struct RequiredMissing {
     pub description: Option<String>,
 }
 
-/// Resolve `scope.commitMessage` to one of three effective values.
-/// Per DESIGN §5.4.3, defaults are kind-based when undeclared.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum EffectiveScope {
-    /// Pattern scans commit messages.
-    Scan,
-    /// Pattern does NOT scan commit messages.
-    Skip,
-    /// Pattern scans AND must produce at least one match.
-    Required,
-}
-
-#[must_use]
-pub fn effective_scope(pat: &Pattern) -> EffectiveScope {
-    let declared = pat.scope.as_ref().and_then(|s| s.commit_message);
-    match declared {
-        Some(CommitMessageScope::Bool(true)) => EffectiveScope::Scan,
-        Some(CommitMessageScope::Bool(false)) => EffectiveScope::Skip,
-        Some(CommitMessageScope::Tag(CommitMessageTag::Required)) => EffectiveScope::Required,
-        None => match pat.kind {
-            PatternKind::Url | PatternKind::Local => EffectiveScope::Scan,
-            // ifchange, block, command don't translate to single-message
-            // scans — DESIGN §5.4.3 defaults table.
-            _ => EffectiveScope::Skip,
-        },
-    }
-}
+// Effective-scope resolution lives in `config::scope` so the (WASM-
+// safe) doctor module can use it without dragging in this verifier.
+// Re-export the symbols here so existing call sites
+// (`crate::commit_msg::effective_scope`, etc.) keep compiling.
+pub use crate::config::resolve_commit_message_scope as effective_scope;
+pub use crate::config::EffectiveCommitMessageScope as EffectiveScope;
 
 /// Strip git's comment lines (`^#`) from a commit-message string,
 /// returning the lint-relevant text. Lines that *start* with `#` are

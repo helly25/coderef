@@ -122,10 +122,10 @@ pub(super) fn check_commit_message_all_disabled(cfg: &Config, out: &mut Vec<Diag
     if cfg.patterns.is_empty() {
         return;
     }
-    let all_disabled = cfg
-        .patterns
-        .values()
-        .all(|p| crate::commit_msg::effective_scope(p) == crate::commit_msg::EffectiveScope::Skip);
+    let all_disabled = cfg.patterns.values().all(|p| {
+        crate::config::resolve_commit_message_scope(p)
+            == crate::config::EffectiveCommitMessageScope::Skip
+    });
     if !all_disabled {
         return;
     }
