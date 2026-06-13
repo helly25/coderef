@@ -102,6 +102,8 @@ pub fn run_doctor(config: &Config) -> DoctorReport {
         self::checks::check_pattern(id, pattern, config, &mut diagnostics);
     }
     self::checks::check_too_broad_other(config, &mut diagnostics);
+    self::checks::check_commit_message_all_disabled(config, &mut diagnostics);
+    self::checks::check_commit_message_ifchange_misconfigured(config, &mut diagnostics);
     diagnostics.sort_by(|a, b| {
         // Errors first, then by check id, then by pattern id.
         b.severity
@@ -342,6 +344,103 @@ mod tests {
             .diagnostics
             .iter()
             .all(|d| d.check != "category.tooBroadOther"));
+    }
+
+    #[test]
+    fn test_doctor_commit_message_all_disabled_silent_with_url_default() {
+        // url defaults to Scan → not all disabled.
+        let cfg = cfg_jsonc(
+            r#"{ "patterns": {
+                "u": { "regex": "X", "target": "https://x" }
+            } }"#,
+        );
+        let report = run_doctor(&cfg);
+        assert!(report
+            .diagnostics
+            .iter()
+            .all(|d| d.check != "commitMessage.allDisabled"));
+    }
+
+    #[test]
+    fn test_doctor_commit_message_all_disabled_fires_when_every_pattern_skips() {
+        // url + explicit `commitMessage: false` → all Skip.
+        let cfg = cfg_jsonc(
+            r#"{ "patterns": {
+                "u": {
+                    "regex":  "X",
+                    "target": "https://x",
+                    "scope":  { "commitMessage": false }
+                }
+            } }"#,
+        );
+        let report = run_doctor(&cfg);
+        let found = report
+            .diagnostics
+            .iter()
+            .any(|d| d.check == "commitMessage.allDisabled" && d.severity == Severity::Info);
+        assert!(found, "got: {:#?}", report.diagnostics);
+    }
+
+    #[test]
+    fn test_doctor_commit_message_all_disabled_silent_on_empty_config() {
+        let cfg = cfg_jsonc("{ }");
+        let report = run_doctor(&cfg);
+        assert!(report
+            .diagnostics
+            .iter()
+            .all(|d| d.check != "commitMessage.allDisabled"));
+    }
+
+    #[test]
+    fn test_doctor_commit_message_ifchange_misconfigured_fires_on_explicit_true() {
+        let cfg = cfg_jsonc(
+            r#"{ "patterns": {
+                "ic": {
+                    "kind":  "ifchange",
+                    "regex": "(unused)",
+                    "scope": { "commitMessage": true }
+                }
+            } }"#,
+        );
+        let report = run_doctor(&cfg);
+        let found = report.diagnostics.iter().any(|d| {
+            d.check == "commitMessage.ifchangeMisconfigured" && d.severity == Severity::Warning
+        });
+        assert!(found, "got: {:#?}", report.diagnostics);
+    }
+
+    #[test]
+    fn test_doctor_commit_message_ifchange_misconfigured_silent_on_default() {
+        // Default for ifchange is Skip — no opt-in declared.
+        let cfg = cfg_jsonc(
+            r#"{ "patterns": {
+                "ic": { "kind": "ifchange", "regex": "(unused)" }
+            } }"#,
+        );
+        let report = run_doctor(&cfg);
+        assert!(report
+            .diagnostics
+            .iter()
+            .all(|d| d.check != "commitMessage.ifchangeMisconfigured"));
+    }
+
+    #[test]
+    fn test_doctor_commit_message_ifchange_misconfigured_fires_on_required() {
+        let cfg = cfg_jsonc(
+            r#"{ "patterns": {
+                "ic": {
+                    "kind":  "ifchange",
+                    "regex": "(unused)",
+                    "scope": { "commitMessage": "required" }
+                }
+            } }"#,
+        );
+        let report = run_doctor(&cfg);
+        let found = report
+            .diagnostics
+            .iter()
+            .any(|d| d.check == "commitMessage.ifchangeMisconfigured");
+        assert!(found, "got: {:#?}", report.diagnostics);
     }
 
     #[test]

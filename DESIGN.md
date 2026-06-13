@@ -4111,11 +4111,11 @@ result. Opt-out via `coderef.commitMessage.enabled: false`.
 
 **Doctor checks specific to commit-message mode:**
 
-| Check                                   | Severity | Trigger                                                                                                                  |
-| --------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `commitMessage.requiredNeverFires`      | info     | A `"required"` pattern wasn't matched in the last N commits (`coderef doctor --corpus=commit-log`).                      |
-| `commitMessage.allDisabled`             | info     | Every pattern has `scope.commitMessage: false`; the `--commit-msg` mode would be a no-op.                                |
-| `commitMessage.ifchangeMisconfigured`   | warning  | A `kind: ifchange` pattern explicitly sets `scope.commitMessage: true` — IfChange doesn't fire on single-message inputs. |
+| Check                                   | Severity | Trigger                                                                                                                                                                                                        |
+| --------------------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `commitMessage.requiredNeverFires`      | info     | A `"required"` pattern wasn't matched in the last N commits (`coderef doctor --corpus=commit-log`).                                                                                                            |
+| `commitMessage.allDisabled`             | info     | Every pattern resolves to `EffectiveScope::Skip` (kind default or explicit `scope.commitMessage: false`); the `--commit-msg` mode would be a no-op. *Shipped in v0.2.*                                         |
+| `commitMessage.ifchangeMisconfigured`   | warning  | A `kind: ifchange` pattern explicitly sets `scope.commitMessage` to `true` or `"required"` — IfChange/ThenChange blocks only verify against a multi-file diff, not a single commit message. *Shipped in v0.2.* |
 
 `coderef-check` already runs the coupled-change verifier when invoked with
 `--staged`; `coderef-changes` exists for projects that want it as a separate,
