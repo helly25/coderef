@@ -127,6 +127,20 @@ suite("coderef extension — runtime", function () {
     // active editor + cursor on a ref + would open a new tab; the
     // smoke is "the command is reachable".)
   });
+
+  test("coderef.references.refresh command is registered (references view wired)", async () => {
+    const commands = await vscode.commands.getCommands(/*filterInternal*/ true);
+    assert.ok(
+      commands.includes("coderef.references.refresh"),
+      "coderef.references.refresh must be in the registered commands list — " +
+        "the references browser view binds to it via menu contribution",
+    );
+    // Invoking it triggers a workspace rescan + tree update. We don't
+    // need the tree contents here (the buildTree logic is pure-tested
+    // in referencesView.test.ts); the smoke is that the command
+    // exists and the dispatcher reaches it without throwing.
+    await vscode.commands.executeCommand("coderef.references.refresh");
+  });
 });
 
 function sleep(ms: number): Promise<void> {

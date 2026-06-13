@@ -52,6 +52,43 @@ class MarkdownString {
   }
 }
 
+// TreeItem and ThemeIcon stubs for the references-view unit tests.
+class TreeItem {
+  description?: string;
+  tooltip?: string;
+  iconPath?: unknown;
+  resourceUri?: Uri;
+  contextValue?: string;
+  command?: unknown;
+  constructor(
+    public label: string,
+    public collapsibleState?: number,
+  ) {}
+}
+
+enum TreeItemCollapsibleState {
+  None = 0,
+  Collapsed = 1,
+  Expanded = 2,
+}
+
+class ThemeIcon {
+  static readonly File = new ThemeIcon("file");
+  static readonly Folder = new ThemeIcon("folder");
+  constructor(public id: string) {}
+}
+
+class EventEmitter<T> {
+  private listeners: ((e: T) => void)[] = [];
+  event = (listener: (e: T) => void): { dispose(): void } => {
+    this.listeners.push(listener);
+    return { dispose: () => {} };
+  };
+  fire(e: T): void {
+    for (const l of this.listeners) l(e);
+  }
+}
+
 const workspace = {
   getWorkspaceFolder(_: unknown): { uri: Uri } | undefined {
     return undefined;
@@ -68,6 +105,10 @@ module.exports = {
   DocumentLink,
   Hover,
   MarkdownString,
+  TreeItem,
+  TreeItemCollapsibleState,
+  ThemeIcon,
+  EventEmitter,
   workspace,
   languages: {},
 };
