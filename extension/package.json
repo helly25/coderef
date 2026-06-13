@@ -51,6 +51,12 @@
         "command": "coderef.explainReference",
         "title": "coderef: Explain reference at cursor",
         "category": "coderef"
+      },
+      {
+        "command": "coderef.references.refresh",
+        "title": "coderef: Refresh references browser",
+        "category": "coderef",
+        "icon": "$(refresh)"
       }
     ],
     "menus": {
@@ -59,6 +65,31 @@
           "command": "coderef.explainReference",
           "group": "navigation@1",
           "when": "editorTextFocus"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "coderef.references.refresh",
+          "when": "view == coderef.references",
+          "group": "navigation"
+        }
+      ]
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "coderef",
+          "title": "coderef",
+          "icon": "$(link)"
+        }
+      ]
+    },
+    "views": {
+      "coderef": [
+        {
+          "id": "coderef.references",
+          "name": "References",
+          "contextualTitle": "coderef references browser"
         }
       ]
     }

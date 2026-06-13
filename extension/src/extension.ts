@@ -20,6 +20,7 @@ import {
   CoderefHoverProvider,
 } from "./providers";
 import { ReferenceCache } from "./referenceCache";
+import { ReferencesTreeProvider, rescanWorkspace } from "./referencesView";
 import { engineVersion } from "./wasmEngine";
 
 let currentConfig: LoadedConfig | undefined;
@@ -65,6 +66,32 @@ export function activate(context: vscode.ExtensionContext): void {
     ),
   );
 
+  // References browser (DESIGN §14.7). Tree view in the activity-bar
+  // container declared in package.json. Refresh on demand or on
+  // file-system events (debounced).
+  const refsProvider = new ReferencesTreeProvider(() => currentConfig);
+  context.subscriptions.push(
+    vscode.window.registerTreeDataProvider("coderef.references", refsProvider),
+  );
+  const triggerRescan = debounce(() => {
+    void rescanWorkspace(refsProvider, () => currentConfig);
+  }, 300);
+  context.subscriptions.push(
+    vscode.commands.registerCommand("coderef.references.refresh", () => {
+      void rescanWorkspace(refsProvider, () => currentConfig);
+    }),
+  );
+  // Initial population.
+  triggerRescan();
+  // Refresh on file change/save.
+  context.subscriptions.push(
+    vscode.workspace.onDidSaveTextDocument(() => triggerRescan()),
+  );
+  const refsWatcher = vscode.workspace.createFileSystemWatcher("**/*");
+  context.subscriptions.push(refsWatcher);
+  context.subscriptions.push(refsWatcher.onDidCreate(() => triggerRescan()));
+  context.subscriptions.push(refsWatcher.onDidDelete(() => triggerRescan()));
+
   // Document lifecycle — keep the cache warm.
   context.subscriptions.push(
     vscode.workspace.onDidOpenTextDocument((doc) => {
@@ -98,9 +125,22 @@ export function activate(context: vscode.ExtensionContext): void {
       if (e.affectsConfiguration("coderef")) {
         reloadConfig();
         cache.invalidateAll();
+        triggerRescan();
       }
     }),
   );
+}
+
+/** Small debounce so a flurry of file events collapses into one rescan. */
+function debounce<F extends (...args: never[]) => void>(fn: F, ms: number): F {
+  let t: NodeJS.Timeout | undefined;
+  return ((...args: never[]) => {
+    if (t) clearTimeout(t);
+    t = setTimeout(() => {
+      t = undefined;
+      fn(...args);
+    }, ms);
+  }) as F;
 }
 
 export function deactivate(): void {
