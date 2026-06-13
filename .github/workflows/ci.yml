@@ -488,15 +488,15 @@ jobs:
           fi
 
   # Aggregating gate for branch protection: mark only `done` as the
-  # required check. Pattern copied from helly25/bzl — has two parts:
+  # required check. Two parts:
   #
   #   1. Self-check: parse this file with `yq` and fail if any job
   #      other than `done` itself is absent from `needs:` below.
   #      Stops a newly added job from silently escaping the gate.
-  #   2. Result aggregation: writes a job-result table to the GH
-  #      Actions step summary, then fails if any required job didn't
-  #      succeed (treating "skipped" as ok so conditional jobs don't
-  #      break the gate).
+  #   2. Failure aggregation: one-line `contains(needs.*.result, ...)`
+  #      guard. GitHub's Actions UI already shows the per-job
+  #      results, so an elaborate result-table step doesn't add
+  #      anything reviewers can't see one click away.
   done:
     needs: [rust, wasm, extension, npm-wrapper, schema, docs]
     if: always()
@@ -524,26 +524,6 @@ jobs:
             exit 1
           fi
           echo "done covers all $(grep -c . <<<"${declared}") workflow jobs."
-      - name: Verify required jobs succeeded
-        env:
-          NEEDS_JSON: ${{ toJSON(needs) }}
-        run: |
-          {
-            echo "| Required job | Result |"
-            echo "| --- | --- |"
-            jq -r 'to_entries[] | "| \(.key) | \(.value.result) |"' <<<"${NEEDS_JSON}"
-          } >>"${GITHUB_STEP_SUMMARY}"
-
-          failed="$(jq -r 'to_entries[]
-            | select(.value.result != "success" and .value.result != "skipped")
-            | .key' <<<"${NEEDS_JSON}")"
-
-          if [[ -n "${failed}" ]]; then
-            echo "The following required jobs did not succeed:"
-            while read -r job; do
-              echo "  - ${job}"
-              echo "::error title=Required job failed::${job} did not succeed"
-            done <<<"${failed}"
-            exit 1
-          fi
-          echo "All required jobs succeeded."
+      - name: Fail if any dependency did not succeed
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1
