@@ -113,6 +113,94 @@ pub(super) fn check_too_broad_other(cfg: &Config, out: &mut Vec<Diagnostic>) {
     }
 }
 
+/// `commitMessage.allDisabled` — every pattern resolves to
+/// `EffectiveScope::Skip` for commit-message linting, which means
+/// `coderef commit-msg` would be a no-op on this config. Usually a
+/// signal that someone disabled the wrong knob; surface as info so
+/// the next consumer notices. DESIGN.md §16.1.1.
+pub(super) fn check_commit_message_all_disabled(cfg: &Config, out: &mut Vec<Diagnostic>) {
+    if cfg.patterns.is_empty() {
+        return;
+    }
+    let all_disabled = cfg.patterns.values().all(|p| {
+        crate::config::resolve_commit_message_scope(p)
+            == crate::config::EffectiveCommitMessageScope::Skip
+    });
+    if !all_disabled {
+        return;
+    }
+    let sev = cfg
+        .severity
+        .get("commitMessage.allDisabled")
+        .copied()
+        .unwrap_or(Severity::Info);
+    if sev == Severity::Off {
+        return;
+    }
+    out.push(Diagnostic {
+        check: "commitMessage.allDisabled".into(),
+        severity: sev,
+        pattern_id: None,
+        message: "every pattern resolves to `scope.commitMessage: false` (kind default or \
+                  explicit); `coderef commit-msg` would be a no-op on this config"
+            .into(),
+        hint: Some(
+            "set `scope.commitMessage: true` (or `\"required\"`) on at least one pattern, \
+             or rely on the kind-based default by leaving `commitMessage` unset on a \
+             url/local pattern"
+                .into(),
+        ),
+    });
+}
+
+/// `commitMessage.ifchangeMisconfigured` — a `kind: "ifchange"`
+/// pattern explicitly opts itself into commit-message scanning. The
+/// IfChange/ThenChange semantics only make sense over a multi-file
+/// diff, not a single commit message; the marker would parse but
+/// never produce a meaningful block. DESIGN.md §16.1.1.
+pub(super) fn check_commit_message_ifchange_misconfigured(cfg: &Config, out: &mut Vec<Diagnostic>) {
+    for (id, p) in &cfg.patterns {
+        if p.kind != crate::config::PatternKind::IfChange {
+            continue;
+        }
+        // Only fire when the pattern *explicitly* sets commitMessage to
+        // true or "required" — the kind-based default for ifchange is
+        // Skip, which is the correct behaviour.
+        let declared = p.scope.as_ref().and_then(|s| s.commit_message);
+        let opted_in = matches!(
+            declared,
+            Some(
+                crate::config::CommitMessageScope::Bool(true)
+                    | crate::config::CommitMessageScope::Tag(
+                        crate::config::CommitMessageTag::Required
+                    )
+            )
+        );
+        if !opted_in {
+            continue;
+        }
+        push_diag(
+            out,
+            cfg,
+            p,
+            id,
+            "commitMessage.ifchangeMisconfigured",
+            Severity::Warning,
+            format!(
+                "pattern `{id}` has `kind: \"ifchange\"` and explicitly sets \
+                 `scope.commitMessage` to opt in; IfChange/ThenChange blocks only verify \
+                 against a multi-file diff, not a single commit message"
+            ),
+            Some(
+                "remove `scope.commitMessage` from this pattern (the kind-based default \
+                 already skips it) — or change the pattern's `kind` if a single-message \
+                 reference is what you actually want"
+                    .into(),
+            ),
+        );
+    }
+}
+
 /// Run every per-pattern check, appending diagnostics in place.
 #[allow(clippy::too_many_lines)] // every check is small; one fn keeps the order obvious
 pub fn check_pattern(id: &str, p: &Pattern, cfg: &Config, out: &mut Vec<Diagnostic>) {

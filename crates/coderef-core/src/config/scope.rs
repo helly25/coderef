@@ -65,6 +65,46 @@ pub enum CommitMessageTag {
     Required,
 }
 
+/// Effective commit-message scope after applying kind-based defaults.
+///
+/// `commit_msg::effective_scope` resolves a Pattern → one of these;
+/// the type lives here (alongside the config struct) so doctor and
+/// other WASM-safe consumers can use it without dragging in the
+/// `commit_msg` verifier (which is host-only).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EffectiveCommitMessageScope {
+    /// Pattern scans commit messages.
+    Scan,
+    /// Pattern does NOT scan commit messages.
+    Skip,
+    /// Pattern scans AND must produce at least one match.
+    Required,
+}
+
+/// Resolve `scope.commitMessage` to its effective value.
+///
+/// Per DESIGN §5.4.3, defaults are kind-based when undeclared:
+/// `url` / `local` → Scan; everything else → Skip.
+#[must_use]
+pub fn resolve_commit_message_scope(pat: &super::pattern::Pattern) -> EffectiveCommitMessageScope {
+    let declared = pat.scope.as_ref().and_then(|s| s.commit_message);
+    match declared {
+        Some(CommitMessageScope::Bool(true)) => EffectiveCommitMessageScope::Scan,
+        Some(CommitMessageScope::Bool(false)) => EffectiveCommitMessageScope::Skip,
+        Some(CommitMessageScope::Tag(CommitMessageTag::Required)) => {
+            EffectiveCommitMessageScope::Required
+        }
+        None => match pat.kind {
+            super::pattern::PatternKind::Url | super::pattern::PatternKind::Local => {
+                EffectiveCommitMessageScope::Scan
+            }
+            // ifchange, block, command don't translate to single-message
+            // scans — DESIGN §5.4.3 defaults table.
+            _ => EffectiveCommitMessageScope::Skip,
+        },
+    }
+}
+
 fn is_default<T: Default + PartialEq>(t: &T) -> bool {
     *t == T::default()
 }
