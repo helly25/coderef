@@ -867,12 +867,11 @@ fn print_patterns_by_category(cfg: &coderef_core::config::Config) {
     println!();
     for c in cats {
         let entries = &groups[c];
-        let inferred_flag =
-            if coderef_core::category::BUILTIN_CATEGORIES.contains(&c.as_str()) {
-                ""
-            } else {
-                " (user-defined)"
-            };
+        let inferred_flag = if coderef_core::category::BUILTIN_CATEGORIES.contains(&c.as_str()) {
+            ""
+        } else {
+            " (user-defined)"
+        };
         println!("[{c}{inferred_flag}] — {n} pattern(s)", n = entries.len());
         for (id, pat) in entries {
             let inferred = pat.category.is_none();
