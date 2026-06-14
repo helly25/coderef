@@ -61,6 +61,15 @@ pub enum Target {
     /// Inclusive line range: `path:N-M` — at least one line in [N, M]
     /// must be inside a changed hunk.
     FileLineRange { path: String, start: u32, end: u32 },
+    /// Named anchor (heading slug in a Markdown file): `path#anchor`.
+    /// The anchor is resolved by `crate::anchor::verify_anchor`
+    /// against the target file's heading slugs; if found, the heading
+    /// range is treated as the changed-region requirement. v0.2
+    /// semantics (kept simple): if the anchor exists in the target
+    /// file *and* any line in the file changed, the target is
+    /// satisfied. A richer "heading section range" interpretation
+    /// (DESIGN §10.2) lands in v0.3.
+    FileAnchor { path: String, anchor: String },
 }
 
 impl Target {
@@ -70,7 +79,8 @@ impl Target {
         match self {
             Self::File { path }
             | Self::FileLine { path, .. }
-            | Self::FileLineRange { path, .. } => path,
+            | Self::FileLineRange { path, .. }
+            | Self::FileAnchor { path, .. } => path,
         }
     }
 }
@@ -221,9 +231,28 @@ fn split_targets(s: &str) -> Vec<String> {
     s.split(',').map(|part| part.trim().to_string()).collect()
 }
 
-/// Parse a single target token. Supports `path`, `path:N`,
-/// `path:N-M`. Anything else is `MalformedTarget` at the caller.
+/// Parse a single target token. Supports:
+///
+/// - `path`
+/// - `path:N`
+/// - `path:N-M`
+/// - `path#anchor`
+///
+/// Anything else is `MalformedTarget` at the caller. The `#`
+/// disambiguator is checked before `:` so a path containing both
+/// (e.g. `docs/x.md#anchor`) is parsed as anchor-only — line/range
+/// targets and anchor targets are mutually exclusive in v0.2.
 fn parse_target(raw: &str) -> Result<Target, ()> {
+    // Anchor form `path#anchor` first.
+    if let Some((path, anchor)) = raw.split_once('#') {
+        if path.is_empty() || anchor.is_empty() {
+            return Err(());
+        }
+        return Ok(Target::FileAnchor {
+            path: path.to_string(),
+            anchor: anchor.to_string(),
+        });
+    }
     if let Some((path, rest)) = raw.split_once(':') {
         if rest.is_empty() {
             return Err(());
@@ -458,5 +487,92 @@ x
         assert_eq!(report.blocks.len(), 1);
         assert!(report.blocks[0].targets.is_empty());
         assert!(report.errors.is_empty(), "{:#?}", report.errors);
+    }
+
+    #[test]
+    fn test_parse_anchor_target() {
+        let src = "\
+// IfChange
+x
+// ThenChange(/docs/security.md#hashing)
+";
+        let report = extract_blocks(src, "a.rs");
+        assert!(report.errors.is_empty(), "{:#?}", report.errors);
+        assert_eq!(report.blocks.len(), 1);
+        assert_eq!(report.blocks[0].targets.len(), 1);
+        assert!(matches!(
+            report.blocks[0].targets[0],
+            Target::FileAnchor { ref path, ref anchor }
+                if path == "/docs/security.md" && anchor == "hashing"
+        ));
+    }
+
+    #[test]
+    fn test_parse_anchor_target_with_hyphens_and_digits_in_anchor() {
+        // Real-world heading slugs include hyphens, digits, and the
+        // github double-hyphen.
+        let src = "\
+// IfChange
+x
+// ThenChange(/docs/x.md#argon2-params, /docs/y.md#section--2)
+";
+        let report = extract_blocks(src, "a.rs");
+        assert!(report.errors.is_empty(), "{:#?}", report.errors);
+        assert_eq!(report.blocks[0].targets.len(), 2);
+        assert!(matches!(
+            report.blocks[0].targets[0],
+            Target::FileAnchor { ref anchor, .. } if anchor == "argon2-params"
+        ));
+        assert!(matches!(
+            report.blocks[0].targets[1],
+            Target::FileAnchor { ref anchor, .. } if anchor == "section--2"
+        ));
+    }
+
+    #[test]
+    fn test_parse_anchor_target_with_empty_anchor_rejected() {
+        let src = "\
+// IfChange
+x
+// ThenChange(/docs/x.md#)
+";
+        let report = extract_blocks(src, "a.rs");
+        // The first target malforms (empty anchor); no successful
+        // targets land, but the block still parses.
+        assert_eq!(report.blocks.len(), 1);
+        assert!(report.blocks[0].targets.is_empty());
+        assert_eq!(report.errors.len(), 1);
+        assert!(matches!(
+            report.errors[0],
+            MarkerParseError::MalformedTarget { ref token, .. } if token == "/docs/x.md#"
+        ));
+    }
+
+    #[test]
+    fn test_parse_anchor_target_with_empty_path_rejected() {
+        let src = "\
+// IfChange
+x
+// ThenChange(#dangling)
+";
+        let report = extract_blocks(src, "a.rs");
+        assert!(report.blocks[0].targets.is_empty());
+        assert_eq!(report.errors.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_anchor_and_line_range_targets_coexist_in_same_marker() {
+        let src = "\
+// IfChange
+x
+// ThenChange(/docs/x.md#hashing, /src/y.rs:10-20, /a.md)
+";
+        let report = extract_blocks(src, "a.rs");
+        assert!(report.errors.is_empty(), "{:#?}", report.errors);
+        let ts = &report.blocks[0].targets;
+        assert_eq!(ts.len(), 3);
+        assert!(matches!(ts[0], Target::FileAnchor { .. }));
+        assert!(matches!(ts[1], Target::FileLineRange { .. }));
+        assert!(matches!(ts[2], Target::File { .. }));
     }
 }
