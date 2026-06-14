@@ -1270,16 +1270,20 @@ Given a resolved local target file and a captured `${anchor}`:
    Levenshtein-1 suggestion when one exists ("did you mean
    `#hashing`?").
 
-v0.2 ships the `github` slugifier (the de-facto default for in-repo
-GitHub-rendered Markdown). The `pandoc` / `gitlab` / `hugo` /
-`mkdocs-material` choices parse from the schema but degrade to
-`Skipped` for now; they land in a follow-up. For non-Markdown
+v0.2 ships all five built-in slugifiers — `github` (default),
+`pandoc`, `gitlab`, `hugo`, `mkdocs-material`. Hugo's algorithm
+coincides with GitLab's on the §6.3.2 canonical example, and
+`mkdocs-material` matches GitHub's — those pairs share an
+implementation in the engine. Pandoc-style explicit `{#id}`
+overrides win against every slugifier (the slugifier only applies
+to derived slugs from heading text). Custom slugifier objects
+(`{ "custom": [...] }`) are still a v0.3 follow-up. For non-Markdown
 extensions (`.html`, `.adoc`, `.rst`, `.txt`), anchor verification is
-also `Skipped` — the file still resolves; the anchor just doesn't
-gate the run. (Doctor's `anchor.skippedExt` info diagnostic is part of
-the §6.3.4 catalogue; the runtime currently surfaces the same fact via
-the `Skipped` outcome and a v0.3 PR wires the doctor diagnostic on
-top.)
+`Skipped` — the file still resolves; the anchor just doesn't gate
+the run. (Doctor's `anchor.skippedExt` info diagnostic is part of
+the §6.3.4 catalogue; the runtime currently surfaces the same fact
+via the `Skipped` outcome and a v0.3 PR wires the doctor diagnostic
+on top.)
 
 #### 6.3.4 Doctor checks
 
