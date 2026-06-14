@@ -16,14 +16,19 @@
 //!   `ThenChange` in the same file).
 //! - `NoVerify` escape hatch inline above the `IfChange` marker.
 //!
-//! Deferred (DESIGN §10.7 / §10.4 / §10.2):
-//! - Shape C composable ids — requires resolving the id through the
-//!   reference engine.
-//! - Glob targets (`/path/*.md`) and `{any}`/`{all}`/`{soft}` flags.
-//! - Anchor targets in `ThenChange` (`/path#anchor`) and label
-//!   sub-region targets (`/path:label-name`).
+//! v0.2 additions (later PRs):
+//! - Shape C composable ids (this file's `resolve_composable_id` +
+//!   `verify_changes_composable`): the `IfChange` id is passed
+//!   through the reference engine before grouping, so
+//!   `IfChange(JIRA(PROJ-123))` blocks in different files coalesce
+//!   into one group.
+//! - Glob, anchor, and label sub-region targets in `ThenChange`.
+//!
+//! Still deferred (DESIGN §10.4 / §10.2 / §10.6):
 //! - `bounding: multipleThenChange` and `allowNesting`.
 //! - Per-commit-message `NoVerify` lines.
+//! - `{soft}` glob flag (warning severity).
+//! - Strict `{all}` semantics (workspace enumeration).
 
 mod diff;
 mod parse;
@@ -31,7 +36,9 @@ mod verify;
 
 pub use self::diff::{parse_unified_diff, ChangedLines};
 pub use self::parse::{extract_blocks, IfChangeBlock, MarkerParseError, MarkerParseReport, Target};
-pub use self::verify::{verify_changes, ChangesReport, Violation, ViolationKind};
+pub use self::verify::{
+    verify_changes, verify_changes_composable, ChangesReport, Violation, ViolationKind,
+};
 
 use crate::config::Config;
 
@@ -109,4 +116,24 @@ pub fn ifchange_enabled(cfg: &Config) -> bool {
     cfg.patterns
         .values()
         .any(|p| p.kind == crate::config::PatternKind::IfChange)
+}
+
+/// Resolve a Shape C composable `IfChange(<id>)` id text through the
+/// reference engine (DESIGN §10.7).
+///
+/// Returns the *resolved target* of the first matching `kind: "url"`
+/// or `kind: "local"` pattern; `None` if no pattern matches. Used as
+/// the canonical group key by [`verify_changes_composable`] so
+/// `IfChange(JIRA(PROJ-123))` in different files coalesces into one
+/// Shape B group regardless of where it appears.
+#[must_use]
+pub fn resolve_composable_id(config: &Config, id_text: &str) -> Option<String> {
+    use crate::config::PatternKind;
+    let report = crate::explain::explain(config, id_text);
+    for m in report.matches {
+        if matches!(m.pattern_kind, PatternKind::Url | PatternKind::Local) {
+            return Some(m.target);
+        }
+    }
+    None
 }
