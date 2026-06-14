@@ -84,7 +84,7 @@ npm view @helly25/coderef version
 
 ## 3. VSCode marketplace (extension VSIX)
 
-Automated by `.github/workflows/marketplace.yml`. The workflow fires
+Automated by `.github/workflows/vscode_marketplace.yml`. The workflow fires
 on the same tag push that drives step 1, builds the VSIX in CI (Rust
 + wasm32 + wasm-pack + Node), uploads it as a downloadable artifact,
 and calls `vsce publish` using the `VSCE_PAT` repo secret. This
@@ -105,14 +105,14 @@ via `scripts/bundle-wasm.cjs`.
 
 The workflow runs automatically on the tag push from step 1 — no
 extra action needed for normal releases. Watch progress at
-`https://github.com/helly25/coderef/actions/workflows/marketplace.yml`.
+`https://github.com/helly25/coderef/actions/workflows/vscode_marketplace.yml`.
 
 For ad-hoc / retro-publish (e.g. a tag pushed before this workflow
 existed, or a re-publish after a marketplace-side issue), trigger
 via `workflow_dispatch`:
 
 ```bash
-gh workflow run marketplace.yml -f tag=v<X.Y.Z>
+gh workflow run vscode_marketplace.yml -f tag=v<X.Y.Z>
 gh run watch                                     # follow the run
 ```
 
