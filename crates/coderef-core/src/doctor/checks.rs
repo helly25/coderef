@@ -201,6 +201,405 @@ pub(super) fn check_commit_message_ifchange_misconfigured(cfg: &Config, out: &mu
     }
 }
 
+/// Scan-dependent thresholds. DESIGN §5.7.4 / §6.3.4 / §10.7
+/// document these as user-configurable in v0.3 via
+/// `integrity.<check>`; v0.2 hard-codes the defaults.
+const CATEGORY_MISMATCH_RATIO_THRESHOLD: f64 = 0.8;
+const CATEGORY_MISMATCH_MIN_SAMPLES: usize = 3;
+const COMPOSABLE_TYPO_LEVENSHTEIN: u32 = 1;
+
+/// `category.mismatch` (DESIGN §5.7.4) — a pattern's matched
+/// references consistently look like one category while the pattern
+/// declares another. Heuristic: if ≥ 80% of `matched_text` starts
+/// with a category sigil (`@` → people, `/` → files, `http` →
+/// urls) and that contradicts the declared/inferred category, warn.
+///
+/// Requires `CATEGORY_MISMATCH_MIN_SAMPLES` (default 3) refs per
+/// pattern to fire — small samples skew the ratio.
+pub(super) fn check_category_mismatch(
+    cfg: &Config,
+    refs: &[crate::reference::Reference],
+    out: &mut Vec<Diagnostic>,
+) {
+    use std::collections::HashMap;
+    let mut by_pattern: HashMap<&str, Vec<&str>> = HashMap::new();
+    for r in refs {
+        by_pattern
+            .entry(r.pattern_id.as_str())
+            .or_default()
+            .push(r.matched_text.as_str());
+    }
+    for (id, samples) in by_pattern {
+        if samples.len() < CATEGORY_MISMATCH_MIN_SAMPLES {
+            continue;
+        }
+        let Some(pattern) = cfg.patterns.get(id) else {
+            continue;
+        };
+        let resolved = pattern
+            .category
+            .as_deref()
+            .unwrap_or_else(|| crate::category::infer_category(pattern.kind));
+        // Tally sigils.
+        let n = samples.len();
+        let mut at = 0usize;
+        let mut slash = 0usize;
+        let mut http = 0usize;
+        for s in &samples {
+            let s = s.trim_start();
+            // Strip a leading wrapper like `TODO(` so the *captured*
+            // sigil is what we count (e.g. `TODO(@user)` → `@user`).
+            let inside = s.split_once('(').map_or(s, |(_, rest)| rest);
+            if inside.starts_with('@') {
+                at += 1;
+            } else if inside.starts_with('/') {
+                slash += 1;
+            } else if inside.starts_with("http://") || inside.starts_with("https://") {
+                http += 1;
+            }
+        }
+        #[allow(clippy::cast_precision_loss)]
+        let n_f = n as f64;
+        let ratio = |k: usize| -> f64 {
+            #[allow(clippy::cast_precision_loss)]
+            let k_f = k as f64;
+            k_f / n_f
+        };
+        let (suspected, sample_sigil) = if ratio(at) >= CATEGORY_MISMATCH_RATIO_THRESHOLD {
+            ("people", "@")
+        } else if ratio(slash) >= CATEGORY_MISMATCH_RATIO_THRESHOLD {
+            ("files", "/")
+        } else if ratio(http) >= CATEGORY_MISMATCH_RATIO_THRESHOLD {
+            ("urls", "http(s)://")
+        } else {
+            continue;
+        };
+        if resolved == suspected {
+            continue;
+        }
+        let sev = resolve_severity(cfg, pattern, "category.mismatch", Severity::Warning);
+        if sev == Severity::Off {
+            continue;
+        }
+        out.push(Diagnostic {
+            check: "category.mismatch".into(),
+            severity: sev,
+            pattern_id: Some(id.to_string()),
+            message: format!(
+                "pattern `{id}` is declared as `category: \"{resolved}\"` but its matches \
+                 consistently start with `{sample_sigil}` (≥ {pct:.0}% of {n} samples), which \
+                 looks like `{suspected}`",
+                pct = CATEGORY_MISMATCH_RATIO_THRESHOLD * 100.0,
+            ),
+            hint: Some(format!(
+                "update `patterns.{id}.category` to `\"{suspected}\"`, or — if the matches \
+                 really aren't `{suspected}` — silence this check via \
+                 `patterns.{id}.severity: {{ \"category.mismatch\": \"off\" }}`"
+            )),
+        });
+    }
+}
+
+/// `anchor.skippedExt` (DESIGN §6.3.4) — a `local` reference carries
+/// a `#anchor` suffix but the target file's extension isn't one of
+/// the supported Markdown extensions (`.md`, `.markdown`). The
+/// reference still resolves; the anchor just isn't verified. Surface
+/// as info so authors notice (e.g. they may have intended `.md` but
+/// typed `.text`).
+///
+/// Host-only: doesn't need to reach `crate::anchor` directly but is
+/// only ever called from `run_doctor_with_workspace`, which itself
+/// is gated.
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn check_anchor_skipped_ext(
+    cfg: &Config,
+    refs: &[crate::reference::Reference],
+    out: &mut Vec<Diagnostic>,
+) {
+    use std::collections::HashSet;
+    let mut seen: HashSet<String> = HashSet::new();
+    for r in refs {
+        if r.pattern_kind != crate::config::PatternKind::Local {
+            continue;
+        }
+        let Some(hash_idx) = r.target.find('#') else {
+            continue;
+        };
+        let path = &r.target[..hash_idx];
+        if path.is_empty() {
+            continue;
+        }
+        let ext = path
+            .rsplit_once('.')
+            .map(|(_, e)| e.to_ascii_lowercase())
+            .unwrap_or_default();
+        if matches!(ext.as_str(), "md" | "markdown") {
+            continue;
+        }
+        // Dedup by (pattern_id, ext) so the diagnostic is one per
+        // affected pattern+extension combo rather than per match.
+        let key = format!("{}:{ext}", r.pattern_id);
+        if !seen.insert(key) {
+            continue;
+        }
+        let Some(pattern) = cfg.patterns.get(&r.pattern_id) else {
+            continue;
+        };
+        let sev = resolve_severity(cfg, pattern, "anchor.skippedExt", Severity::Info);
+        if sev == Severity::Off {
+            continue;
+        }
+        let ext_display = if ext.is_empty() {
+            "(no extension)".to_string()
+        } else {
+            format!(".{ext}")
+        };
+        out.push(Diagnostic {
+            check: "anchor.skippedExt".into(),
+            severity: sev,
+            pattern_id: Some(r.pattern_id.clone()),
+            message: format!(
+                "pattern `{p}` resolves to a target with extension `{ext_display}` and a \
+                 `#anchor` suffix; anchor verification is only implemented for `.md` / \
+                 `.markdown` files in v0.2",
+                p = r.pattern_id,
+            ),
+            hint: Some(
+                "remove the `#anchor` portion from this reference, or convert the target \
+                 file to Markdown, or silence this check via \
+                 `severity: { \"anchor.skippedExt\": \"off\" }`"
+                    .into(),
+            ),
+        });
+    }
+}
+
+/// `anchor.styleMismatch` (DESIGN §6.3.4) — a `local` reference's
+/// target file mixes Pandoc-style explicit `{#id}` heading
+/// annotations with un-annotated headings, but the pattern's
+/// configured slugifier is `github`. The author may be relying on
+/// Pandoc anchors that github won't honour.
+///
+/// Heuristic: warn when a target file contains *both* explicit `{#id}`
+/// and un-annotated headings, and the resolve config doesn't pin the
+/// slugifier to `pandoc`. The check reads each unique target file
+/// once.
+///
+/// Host-only: reads target files from disk and calls
+/// `crate::anchor::extract_headings`, both unavailable on `wasm32`.
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn check_anchor_style_mismatch(
+    cfg: &Config,
+    refs: &[crate::reference::Reference],
+    root: &std::path::Path,
+    out: &mut Vec<Diagnostic>,
+) {
+    use std::collections::HashSet;
+    let mut probed: HashSet<String> = HashSet::new();
+    for r in refs {
+        if r.pattern_kind != crate::config::PatternKind::Local {
+            continue;
+        }
+        let Some(hash_idx) = r.target.find('#') else {
+            continue;
+        };
+        let path_part = &r.target[..hash_idx];
+        let ext = path_part
+            .rsplit_once('.')
+            .map(|(_, e)| e.to_ascii_lowercase())
+            .unwrap_or_default();
+        if !matches!(ext.as_str(), "md" | "markdown") {
+            continue;
+        }
+        let Some(pattern) = cfg.patterns.get(&r.pattern_id) else {
+            continue;
+        };
+        let slugifier = pattern
+            .resolve
+            .as_ref()
+            .and_then(|res| res.slugifier.as_ref())
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("github");
+        // Only warn on github (the default); if the user picked
+        // pandoc/gitlab/etc explicitly, they know what they're doing.
+        if slugifier != "github" {
+            continue;
+        }
+        let key = format!("{}:{path_part}", r.pattern_id);
+        if !probed.insert(key) {
+            continue;
+        }
+        let abs = root.join(path_part.trim_start_matches('/'));
+        let Ok(content) = std::fs::read_to_string(&abs) else {
+            continue;
+        };
+        let headings = crate::anchor::extract_headings(&content);
+        if headings.is_empty() {
+            continue;
+        }
+        let has_explicit = headings.iter().any(|h| h.explicit_id.is_some());
+        let has_implicit = headings.iter().any(|h| h.explicit_id.is_none());
+        if !(has_explicit && has_implicit) {
+            continue;
+        }
+        let sev = resolve_severity(cfg, pattern, "anchor.styleMismatch", Severity::Warning);
+        if sev == Severity::Off {
+            continue;
+        }
+        out.push(Diagnostic {
+            check: "anchor.styleMismatch".into(),
+            severity: sev,
+            pattern_id: Some(r.pattern_id.clone()),
+            message: format!(
+                "target file `{path_part}` mixes Pandoc-style `{{#id}}` headings with \
+                 un-annotated headings; pattern `{p}` uses the `github` slugifier (the \
+                 default), which honours `{{#id}}` overrides but renders un-annotated \
+                 headings differently than Pandoc would",
+                p = r.pattern_id,
+            ),
+            hint: Some(
+                "set `patterns.<id>.resolve.slugifier: \"pandoc\"` to use Pandoc's algorithm \
+                 consistently, or remove the `{#id}` overrides if github-style slugs are \
+                 what the docs are rendered with"
+                    .into(),
+            ),
+        });
+    }
+}
+
+/// `coupled.composableTypo` (DESIGN §10.7) — an `IfChange(<id>)`
+/// block has an id text that *almost* matches one of the workspace's
+/// `kind: "url"` / `kind: "local"` patterns (Levenshtein within
+/// `COMPOSABLE_TYPO_LEVENSHTEIN`, default 1) but fails to resolve.
+/// Usually a typo on a Shape C composable id.
+///
+/// Host-only: consumes `crate::ifchange` blocks, which only exist on
+/// non-wasm targets.
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn check_coupled_composable_typo(
+    cfg: &Config,
+    blocks: &[crate::ifchange::IfChangeBlock],
+    out: &mut Vec<Diagnostic>,
+) {
+    use std::collections::HashSet;
+    // Collect every unique IfChange-id text from the workspace.
+    // IfChange markers come from the dedicated block scanner, not the
+    // reference scanner — they have their own grammar.
+    let mut id_texts: HashSet<&str> = HashSet::new();
+    for b in blocks {
+        if let Some(ref id) = b.id {
+            if !id.is_empty() {
+                id_texts.insert(id.as_str());
+            }
+        }
+    }
+    for id in id_texts {
+        // If it resolves, no typo.
+        if crate::ifchange::resolve_composable_id(cfg, id).is_some() {
+            continue;
+        }
+        // Otherwise, see if any url/local pattern is *almost* a match.
+        let mut nearest: Option<&str> = None;
+        for (pat_id, p) in &cfg.patterns {
+            if !matches!(
+                p.kind,
+                crate::config::PatternKind::Url | crate::config::PatternKind::Local
+            ) {
+                continue;
+            }
+            // Look at the pattern's first capture group as the
+            // "near-match" candidate. We approximate via a brute-force
+            // suffix probe: if removing or adding one char makes the
+            // id match the pattern, it's a typo.
+            let Ok(re) = fancy_regex::Regex::new(&p.regex) else {
+                continue;
+            };
+            // Try one-char-edit neighbours.
+            if levenshtein_near_match(&re, id, COMPOSABLE_TYPO_LEVENSHTEIN) {
+                nearest = Some(pat_id.as_str());
+                break;
+            }
+        }
+        let Some(near_id) = nearest else {
+            continue;
+        };
+        // Top-level severity override (no specific pattern id to scope
+        // against — this is a global doctor signal).
+        let sev = cfg
+            .severity
+            .get("coupled.composableTypo")
+            .copied()
+            .unwrap_or(Severity::Info);
+        if sev == Severity::Off {
+            continue;
+        }
+        out.push(Diagnostic {
+            check: "coupled.composableTypo".into(),
+            severity: sev,
+            pattern_id: None,
+            message: format!(
+                "IfChange id `{id}` doesn't resolve through any pattern, but a small edit \
+                 would match pattern `{near_id}` — likely a typo"
+            ),
+            hint: Some(
+                "double-check the id text; if it's intentional, declare it as a literal \
+                 Shape B id (no parens) or escalate this check via \
+                 `severity: { \"coupled.composableTypo\": \"off\" }`"
+                    .into(),
+            ),
+        });
+    }
+}
+
+/// Does a Levenshtein-`max`-edit neighbour of `text` match `re`?
+/// v0.2 only handles `max == 1`; larger thresholds would explode the
+/// neighbour-enumeration cost without much practical value.
+///
+/// Only used by the host-only `check_coupled_composable_typo`.
+#[cfg(not(target_arch = "wasm32"))]
+fn levenshtein_near_match(re: &fancy_regex::Regex, text: &str, max: u32) -> bool {
+    if max != 1 {
+        return false;
+    }
+    let chars: Vec<char> = text.chars().collect();
+    // Substitution: replace each char with each ASCII letter/digit/`-`/`_`.
+    let probe = "abcdefghijklmnopqrstuvwxyz0123456789-_";
+    for i in 0..chars.len() {
+        for sub in probe.chars() {
+            if sub == chars[i] {
+                continue;
+            }
+            let mut candidate = chars.clone();
+            candidate[i] = sub;
+            let s: String = candidate.iter().collect();
+            if re.is_match(&s).unwrap_or(false) {
+                return true;
+            }
+        }
+    }
+    // Deletion: drop each char.
+    for i in 0..chars.len() {
+        let mut candidate = chars.clone();
+        candidate.remove(i);
+        let s: String = candidate.iter().collect();
+        if re.is_match(&s).unwrap_or(false) {
+            return true;
+        }
+    }
+    // Insertion: add each probe char at each position.
+    for i in 0..=chars.len() {
+        for ins in probe.chars() {
+            let mut candidate = chars.clone();
+            candidate.insert(i, ins);
+            let s: String = candidate.iter().collect();
+            if re.is_match(&s).unwrap_or(false) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// Run every per-pattern check, appending diagnostics in place.
 #[allow(clippy::too_many_lines)] // every check is small; one fn keeps the order obvious
 pub fn check_pattern(id: &str, p: &Pattern, cfg: &Config, out: &mut Vec<Diagnostic>) {

@@ -150,6 +150,29 @@ pub fn run_doctor_with_workspace(
     }
 
     let mut additions: Vec<Diagnostic> = Vec::new();
+
+    // Scan-dependent v0.2 checks (DESIGN §5.7.4 / §6.3.4 / §10.9).
+    // `pattern.unused` (below) is the original; the rest were
+    // deferred when their feature PRs landed:
+    // - `category.mismatch`        (DESIGN §5.7.4)
+    // - `anchor.skippedExt`        (DESIGN §6.3.4)
+    // - `anchor.styleMismatch`     (DESIGN §6.3.4)
+    // - `coupled.composableTypo`   (DESIGN §10.7)
+    self::checks::check_category_mismatch(config, &refs, &mut additions);
+    self::checks::check_anchor_skipped_ext(config, &refs, &mut additions);
+    self::checks::check_anchor_style_mismatch(config, &refs, root.as_ref(), &mut additions);
+
+    // IfChange markers live in a separate index from regular
+    // references; scan them too so `coupled.composableTypo` has the
+    // right input.
+    if crate::ifchange::ifchange_enabled(config) {
+        if let Ok((blocks, _parse_errors)) =
+            crate::ifchange::scan_workspace_blocks(root.as_ref(), config)
+        {
+            self::checks::check_coupled_composable_typo(config, &blocks, &mut additions);
+        }
+    }
+
     for (id, pattern) in &scannable.patterns {
         if !counts_by_pattern.contains_key(id.as_str()) {
             // Default severity is `Info` (shared / template configs
