@@ -182,6 +182,13 @@ function mapPlatform() {
     case "arm64":  arch = "arm64"; break;
     default:       arch = undefined;
   }
+  // Intel Macs are unsupported as of v0.2.1: Apple stopped shipping
+  // Intel hardware in 2023 and the macos-13 GitHub runner was the
+  // slowest in our release matrix. Emit an explicit error rather than
+  // letting the download fall over on a 404.
+  if (platform === "macos" && arch === "x64") {
+    arch = undefined;
+  }
   return { platform, arch };
 }
 
