@@ -7,7 +7,7 @@ versions follow [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
-## v0.2.0 — 2026-06-14
+## v0.2.1 — 2026-06-14
 
 ### Highlights
 
@@ -81,6 +81,15 @@ versions follow [SemVer](https://semver.org/spec/v2.0.0.html).
   Copy-as-Markdown, exportJson.
 - Multi-target references, network profiles, `coderef upgrade`
   codemod, visual config editor, external-URL anchor verification.
+
+## v0.2.0 — yanked, never shipped
+
+The original release run (workflow 27498341045) was cancelled while
+the `x86_64-apple-darwin` build sat in the `macos-13` GitHub Actions
+queue. The matrix was reshaped to drop Intel Mac support (PR #43, #44)
+and the actual release ships as **v0.2.1**. The `v0.2.0` tag exists on
+the remote as an orphan ref with no GitHub Release, no published
+binaries, and no presence on npm or the VSCode Marketplace.
 
 ## v0.1.0 — 2026-06-07
 

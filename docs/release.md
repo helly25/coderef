@@ -37,21 +37,21 @@ unless this is a pre-release).
 ## 1. GitHub Release (CLI binaries)
 
 Triggers the cross-build in `.github/workflows/release.yml`. Produces
-the five platform tarballs the npm wrapper downloads at install time.
+the four platform tarballs the npm wrapper downloads at install time.
 
 ```bash
-git tag v0.2.0 -m "coderef v0.2.0"
-git push origin v0.2.0
+git tag v0.2.1 -m "coderef v0.2.1"
+git push origin v0.2.1
 ```
 
-Then watch `gh run watch --branch v0.2.0` until the `release` job
+Then watch `gh run watch --branch v0.2.1` until the `release` job
 shows green. Verify:
 
 ```bash
-gh release view v0.2.0 --json assets --jq '.assets[].name'
+gh release view v0.2.1 --json assets --jq '.assets[].name'
 ```
 
-Expect 10 entries (5 platforms × 2 files: archive + `.sha256`).
+Expect 8 entries (4 platforms × 2 files: archive + `.sha256`).
 
 ## 2. npm wrapper
 
