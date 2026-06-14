@@ -288,6 +288,98 @@ fn integration_label_target_diff_outside_named_block_fails() {
 }
 
 #[test]
+fn integration_shape_c_composable_id_groups_via_jira_pattern() {
+    // Config declares an `ifchange` pattern AND a `jira` URL pattern.
+    // Both blocks use `IfChange(JIRA(PROJ-1))`. Shape C resolves the
+    // id through the JIRA pattern, so the two blocks group together.
+    let root = tmpdir("shape-c-pass");
+    let cfg_str = r#"
+{
+  "patterns": {
+    "ic":   { "kind": "ifchange", "regex": "(unused)" },
+    "jira": {
+      "regex":  "JIRA\\((?<t>[A-Z]+-\\d+)\\)",
+      "target": "https://jira.example.com/${t}"
+    }
+  }
+}
+"#;
+    write(
+        &root,
+        "src/a.py",
+        "# IfChange(JIRA(PROJ-1))\nA = 1\n# ThenChange\n",
+    );
+    write(
+        &root,
+        "src/b.py",
+        "# IfChange(JIRA(PROJ-1))\nB = 1\n# ThenChange\n",
+    );
+    // Both peers change → Shape C resolution groups them, peer
+    // requirement is satisfied.
+    let diff = "\
++++ b/src/a.py
+@@ -2 +2 @@
+-A = 0
++A = 1
++++ b/src/b.py
+@@ -2 +2 @@
+-B = 0
++B = 1
+";
+    let cfg = Config::from_jsonc_str(cfg_str).unwrap();
+    let (blocks, errors) = scan_workspace_blocks(&root, &cfg).unwrap();
+    assert!(errors.is_empty(), "{errors:#?}");
+    let cl = parse_unified_diff(diff);
+    let resolver = |id: &str| coderef_core::ifchange::resolve_composable_id(&cfg, id);
+    let report =
+        coderef_core::ifchange::verify_changes_composable(&blocks, &errors, &cl, Some(&resolver));
+    assert!(report.passed(), "{report:#?}");
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn integration_shape_c_one_peer_unchanged_emits_missing_peer() {
+    let root = tmpdir("shape-c-miss");
+    let cfg_str = r#"
+{
+  "patterns": {
+    "ic":   { "kind": "ifchange", "regex": "(unused)" },
+    "jira": {
+      "regex":  "JIRA\\((?<t>[A-Z]+-\\d+)\\)",
+      "target": "https://jira.example.com/${t}"
+    }
+  }
+}
+"#;
+    write(
+        &root,
+        "src/a.py",
+        "# IfChange(JIRA(PROJ-9))\nA = 1\n# ThenChange\n",
+    );
+    write(
+        &root,
+        "src/b.py",
+        "# IfChange(JIRA(PROJ-9))\nB = 1\n# ThenChange\n",
+    );
+    // Only src/a.py changes.
+    let diff = "\
++++ b/src/a.py
+@@ -2 +2 @@
+-A = 0
++A = 1
+";
+    let cfg = Config::from_jsonc_str(cfg_str).unwrap();
+    let (blocks, errors) = scan_workspace_blocks(&root, &cfg).unwrap();
+    let cl = parse_unified_diff(diff);
+    let resolver = |id: &str| coderef_core::ifchange::resolve_composable_id(&cfg, id);
+    let report =
+        coderef_core::ifchange::verify_changes_composable(&blocks, &errors, &cl, Some(&resolver));
+    assert_eq!(report.violations.len(), 1);
+    assert_eq!(report.violations[0].kind, "missing-peer");
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn integration_unrelated_diff_does_not_fire_blocks() {
     let root = tmpdir("noise");
     write(&root, "src/a.py", "# IfChange(grp)\nX = 1\n# ThenChange\n");

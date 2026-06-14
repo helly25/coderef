@@ -2029,7 +2029,7 @@ safety net.
 
 ---
 
-## 10. Coupled-Change Enforcement (v0.2; Shape C composable IDs v0.4)
+## 10. Coupled-Change Enforcement (v0.2; Shape C composable IDs shipped in v0.2 polish track)
 
 Some code, data, and docs *must change together* but live in different files.
 The canonical example is a comment-marker convention that says "if you edit
@@ -2257,7 +2257,9 @@ features each get their own opt-out (`NoVerify(coderef:check)`,
 
 ### 10.7 Id resolution and composability
 
-When `composable: true`, the `id` capture is passed through the reference
+*Shipped in v0.2.* When the verifier is called via
+`verify_changes_composable` (the path `coderef changes` takes), every
+`IfChange(<id>)` block's id text is passed through the reference
 engine before grouping:
 
 1. Try each pattern with `kind: "url"` or `kind: "local"` against the literal
@@ -2271,9 +2273,10 @@ different files group together, and a future migration from
 `IfChange(some-string)` to `IfChange(JIRA(PROJ-123))` is non-disruptive
 provided both resolve to the same group key.
 
-Doctor fires `coupled.composableTypo` when an id text *almost* matches a
-pattern's regex (Levenshtein within a small threshold) but fails to resolve
-— usually a typo.
+Doctor's `coupled.composableTypo` check (an id text *almost* matches a
+pattern's regex but fails to resolve — usually a typo, Levenshtein
+within a small threshold) stays a v0.3 follow-up alongside the
+scan-dependent doctor pass.
 
 ### 10.8 CLI
 

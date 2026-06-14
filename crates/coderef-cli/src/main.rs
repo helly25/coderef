@@ -965,8 +965,16 @@ fn cmd_changes(args: Vec<String>) -> ExitCode {
     let diff_text = String::from_utf8_lossy(&out.stdout);
     let changed = coderef_core::ifchange::parse_unified_diff(&diff_text);
 
-    // 3. Verify.
-    let r = coderef_core::ifchange::verify_changes(&blocks, &parse_errors, &changed);
+    // 3. Verify. Pass a composable-id resolver so Shape C
+    // `IfChange(JIRA(PROJ-1))` blocks group by the resolved target
+    // (DESIGN §10.7) rather than by the literal id text.
+    let resolver = |id: &str| coderef_core::ifchange::resolve_composable_id(&cfg, id);
+    let r = coderef_core::ifchange::verify_changes_composable(
+        &blocks,
+        &parse_errors,
+        &changed,
+        Some(&resolver),
+    );
 
     match report {
         Report::Text => print_changes_text(&r),

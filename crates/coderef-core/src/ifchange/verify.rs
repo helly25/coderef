@@ -84,18 +84,59 @@ pub struct ParseErrorReport {
 /// Pass 3. `blocks` is the workspace-wide collection (already parsed
 /// per-file via `extract_blocks` and concatenated); `parse_errors`
 /// carries forward any marker-parse failures the caller collected.
+///
+/// Shape B groups by literal id text. For Shape C (composable ids
+/// resolved through the reference engine), use
+/// [`verify_changes_composable`].
 #[must_use]
-#[allow(clippy::too_many_lines)] // pass 3 is naturally long; splitting hides flow
 pub fn verify_changes(
     blocks: &[IfChangeBlock],
     parse_errors: &[MarkerParseError],
     diff: &ChangedLines,
 ) -> ChangesReport {
-    // Index by id for Shape B peer lookup. We skip blocks without an id.
-    let mut by_id: BTreeMap<&str, Vec<&IfChangeBlock>> = BTreeMap::new();
+    verify_changes_composable(
+        blocks,
+        parse_errors,
+        diff,
+        None::<&dyn Fn(&str) -> Option<String>>,
+    )
+}
+
+/// Pass 3 with optional composable-id resolution (DESIGN §10.7).
+///
+/// When `resolver` is `Some`, every block's id is passed through it
+/// before being used as the Shape B group key — so
+/// `IfChange(JIRA(PROJ-123))` blocks coalesce regardless of which
+/// file they appear in, provided the resolver maps the id to a
+/// stable canonical form. When `resolver` returns `None` for an id
+/// (or when no resolver is supplied), the literal id text is used,
+/// keeping Shape B semantics unchanged.
+#[must_use]
+#[allow(clippy::too_many_lines)] // pass 3 is naturally long; splitting hides flow
+pub fn verify_changes_composable<F>(
+    blocks: &[IfChangeBlock],
+    parse_errors: &[MarkerParseError],
+    diff: &ChangedLines,
+    resolver: Option<&F>,
+) -> ChangesReport
+where
+    F: Fn(&str) -> Option<String> + ?Sized,
+{
+    // Resolve each block's id once, up front. The resolved key is the
+    // resolver's output (when Some) or the literal id (when None / no
+    // resolver). For lookup-by-resolved-id, we share one helper.
+    let resolve = |id: &str| -> String {
+        resolver
+            .and_then(|r| r(id))
+            .unwrap_or_else(|| id.to_string())
+    };
+
+    // Index by resolved id for Shape B / C peer lookup. We skip
+    // blocks without an id.
+    let mut by_id: BTreeMap<String, Vec<&IfChangeBlock>> = BTreeMap::new();
     for b in blocks {
         if let Some(ref id) = b.id {
-            by_id.entry(id.as_str()).or_default().push(b);
+            by_id.entry(resolve(id)).or_default().push(b);
         }
     }
 
@@ -198,9 +239,10 @@ pub fn verify_changes(
             }
         }
 
-        // Shape B — peers with the same id.
+        // Shape B / C — peers with the same (resolved) id.
         if let Some(ref id) = b.id {
-            if let Some(peers) = by_id.get(id.as_str()) {
+            let resolved_id = resolve(id);
+            if let Some(peers) = by_id.get(&resolved_id) {
                 for peer in peers {
                     if std::ptr::eq(*peer, b) {
                         continue;
@@ -535,6 +577,70 @@ mod tests {
         let r = verify_changes(&[block_a], &[], &cl);
         assert_eq!(r.violations.len(), 1);
         assert_eq!(r.violations[0].kind, "missing-target");
+    }
+
+    #[test]
+    fn test_composable_resolver_groups_blocks_with_distinct_ids_to_same_resolved_key() {
+        // Two blocks in different files with id texts that the
+        // resolver maps to the *same* canonical key. They should
+        // group under Shape B-style peer-check.
+        let b1 = block("a.rs", 1, 5, Some("JIRA(PROJ-1)"), vec![]);
+        let b2 = block("b.rs", 10, 15, Some("JIRA(PROJ-1)"), vec![]);
+        let resolver = |id: &str| -> Option<String> {
+            // Mock: every JIRA(...) maps to a canonical jira-url.
+            if id.starts_with("JIRA(") {
+                Some(format!("https://j/{id}"))
+            } else {
+                None
+            }
+        };
+        // Both blocks change → both peers in the group → passes.
+        let cl = ChangedLines::from_pairs(&[("a.rs", &[(2, 2)]), ("b.rs", &[(12, 12)])]);
+        let r = verify_changes_composable(&[b1, b2], &[], &cl, Some(&resolver));
+        assert!(r.passed(), "{r:#?}");
+    }
+
+    #[test]
+    fn test_composable_resolver_one_peer_unchanged_emits_missing_peer() {
+        let b1 = block("a.rs", 1, 5, Some("JIRA(PROJ-9)"), vec![]);
+        let b2 = block("b.rs", 10, 15, Some("JIRA(PROJ-9)"), vec![]);
+        let resolver = |id: &str| -> Option<String> {
+            if id.starts_with("JIRA(") {
+                Some(format!("https://j/{id}"))
+            } else {
+                None
+            }
+        };
+        // Only a.rs changes; b.rs unchanged → peer violation.
+        let cl = ChangedLines::from_pairs(&[("a.rs", &[(2, 2)])]);
+        let r = verify_changes_composable(&[b1, b2], &[], &cl, Some(&resolver));
+        assert_eq!(r.violations.len(), 1);
+        assert_eq!(r.violations[0].kind, "missing-peer");
+    }
+
+    #[test]
+    fn test_composable_resolver_none_falls_back_to_literal_id() {
+        // Resolver returns None for everything → behaves like Shape B
+        // with literal ids. Different literal ids → no grouping.
+        let b1 = block("a.rs", 1, 5, Some("alpha"), vec![]);
+        let b2 = block("b.rs", 10, 15, Some("beta"), vec![]);
+        let resolver = |_: &str| None;
+        let cl = ChangedLines::from_pairs(&[("a.rs", &[(2, 2)])]);
+        let r = verify_changes_composable(&[b1, b2], &[], &cl, Some(&resolver));
+        // No groups, no peer requirement → passes.
+        assert!(r.passed(), "{r:#?}");
+    }
+
+    #[test]
+    fn test_composable_no_resolver_argument_matches_legacy_behaviour() {
+        // verify_changes is a thin wrapper for the no-resolver case.
+        let b1 = block("a.rs", 1, 5, Some("grp"), vec![]);
+        let b2 = block("b.rs", 10, 15, Some("grp"), vec![]);
+        let cl = ChangedLines::from_pairs(&[("a.rs", &[(2, 2)])]);
+        let r = verify_changes(&[b1, b2], &[], &cl);
+        // Shape B: literal id "grp" matches across files → peer needed.
+        assert_eq!(r.violations.len(), 1);
+        assert_eq!(r.violations[0].kind, "missing-peer");
     }
 
     #[test]
