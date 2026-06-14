@@ -40,6 +40,18 @@ jobs:
     name: Publish helly25.coderef
     runs-on: ubuntu-latest
     steps:
+      # Fail fast if the secret isn't configured rather than burning
+      # ~5 minutes of Rust + WASM build time only to error at the
+      # final publish step.
+      - name: Verify VSCE_PAT secret is configured
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          if [ -z "$VSCE_PAT" ]; then
+            echo "::error::VSCE_PAT repo secret is not set. Add it at Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+
       - uses: actions/checkout@v4
         with:
           # On tag push, github.ref is refs/tags/<tag>. On
@@ -86,10 +98,6 @@ jobs:
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
         run: |
-          if [ -z "$VSCE_PAT" ]; then
-            echo "::error::VSCE_PAT repo secret is not set. Add it at Settings → Secrets and variables → Actions."
-            exit 1
-          fi
           vsix=$(ls coderef-*.vsix | head -1)
           echo "publishing $vsix"
           npx vsce publish --packagePath "$vsix"
