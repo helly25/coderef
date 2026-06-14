@@ -8,12 +8,21 @@ name: npm publish (@helly25/coderef wrapper)
 # 404s during postinstall.
 #
 # Triggers:
-#   - `release: types: [published]` — fires automatically once
-#     release.yml creates the GitHub Release. Future releases are
-#     zero-touch.
+#   - `push: tags: v*.*.*` — fires on the same tag push that drives
+#     release.yml and vscode_marketplace.yml. The "wait for GitHub
+#     Release" step below polls until release.yml has finished
+#     creating the release with assets, then publishes. Future
+#     releases are zero-touch.
 #   - `workflow_dispatch { tag }` — ad-hoc / retro-publish. Useful
-#     for the very first run on a tag that pre-dates this workflow
-#     (v0.2.1), and for re-runs after a transient registry failure.
+#     for the very first run on a tag that pre-dates this workflow,
+#     and for re-runs after a transient registry failure.
+#
+# NB: we previously had `release: types: [published]` here, the
+# natural-looking trigger, but GitHub Actions deliberately
+# suppresses workflows triggered by events caused by another
+# workflow's `GITHUB_TOKEN` (anti-recursion). release.yml's
+# `gh release create` call thus never fired this workflow — see
+# `feedback_github_token_no_downstream_workflows` for the saga.
 #
 # Required repo secret: NPM_TOKEN — a Granular Access Token from
 # npmjs.com with `Read and write` permission on the `@helly25`
@@ -21,12 +30,14 @@ name: npm publish (@helly25/coderef wrapper)
 # token bypasses interactive OTP. See docs/release.md §2.
 
 on:
-  release:
-    types: [published]
+  push:
+    tags:
+      - "v*.*.*"
+      - "v*.*.*-*"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag to publish (e.g. v0.2.1). The matching GitHub Release must already exist."
+        description: "Tag to publish (e.g. v0.2.3). The GitHub Release for this tag must already exist."
         required: true
         type: string
 
@@ -52,11 +63,13 @@ jobs:
         id: tag
         env:
           INPUT_TAG: ${{ inputs.tag }}
-          REL_TAG: ${{ github.event.release.tag_name }}
+          GH_REF: ${{ github.ref }}
         run: |
-          tag="${INPUT_TAG:-$REL_TAG}"
-          if [ -z "$tag" ]; then
-            echo "::error::No tag resolved from inputs.tag or release.tag_name"
+          # workflow_dispatch: inputs.tag = "v0.2.3"
+          # push:tags:        github.ref = "refs/tags/v0.2.3" → strip prefix
+          tag="${INPUT_TAG:-${GH_REF#refs/tags/}}"
+          if [ -z "$tag" ] || [ "$tag" = "$GH_REF" ]; then
+            echo "::error::No tag resolved from inputs.tag or github.ref"
             exit 1
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
@@ -66,22 +79,30 @@ jobs:
         with:
           ref: ${{ steps.tag.outputs.tag }}
 
-      # The wrapper's postinstall downloads from the GitHub Release.
-      # If the release doesn't exist yet (or has no assets), every
-      # subsequent `npm install @helly25/coderef@<X>` will fail until
-      # Channel 1 catches up. Refuse to publish into that broken
-      # window.
-      - name: Verify matching GitHub Release exists and has assets
+      # The wrapper's postinstall downloads from the GitHub Release,
+      # so this workflow must wait for release.yml (the other consumer
+      # of the same tag-push event) to finish building the 4 platform
+      # binaries and creating the release. release.yml typically takes
+      # 10-15 min; poll up to 30 min total before giving up.
+      #
+      # On `workflow_dispatch`, the release usually already exists, so
+      # the first poll wins and the wait collapses to seconds.
+      - name: Wait for GitHub Release to be created with assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.tag.outputs.tag }}
         run: |
-          assets=$(gh release view "$TAG" --json assets --jq '.assets | length' 2>/dev/null || echo "")
-          if [ -z "$assets" ] || [ "$assets" = "0" ]; then
-            echo "::error::GitHub Release $TAG doesn't exist or has 0 assets. Channel 1 (release.yml) must complete before Channel 2."
-            exit 1
-          fi
-          echo "GitHub Release $TAG has $assets asset(s) — safe to publish wrapper"
+          for i in $(seq 1 30); do
+            assets=$(gh release view "$TAG" --json assets --jq '.assets | length' 2>/dev/null || echo "")
+            if [ -n "$assets" ] && [ "$assets" -gt 0 ]; then
+              echo "GitHub Release $TAG has $assets asset(s) — proceeding"
+              exit 0
+            fi
+            echo "  poll $i/30: GitHub Release $TAG not yet ready, sleeping 60s"
+            sleep 60
+          done
+          echo "::error::GitHub Release $TAG didn't appear within 30 minutes — release.yml may have failed. Inspect that workflow before re-running this one."
+          exit 1
 
       - uses: actions/setup-node@v4
         with:
