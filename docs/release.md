@@ -55,31 +55,74 @@ Expect 8 entries (4 platforms × 2 files: archive + `.sha256`).
 
 ## 2. npm wrapper
 
-Needs `NPM_TOKEN` either via `~/.npmrc` (`npm login`) or an env var.
-The wrapper's `install.js` downloads from the GitHub Release created
-in step 1, so this step is unusable until step 1 is green.
+Automated by `.github/workflows/npm_publish.yml`. The workflow fires
+on `release: types: [published]` — i.e. as soon as step 1 finishes
+creating the GitHub Release — so there's no window where the
+wrapper exists on npm but the binaries it tries to download don't
+exist yet. The job double-checks `gh release view` before calling
+`npm publish` and refuses to publish into a broken state.
 
-Test the install locally first against the fresh release:
+### One-time setup
+
+1. **npm account + scope**: sign up at npmjs.com with username
+   `helly25` (auto-creates the `@helly25` scope under which
+   `@helly25/coderef` lives).
+2. **2FA**: enable on the publisher account with mode
+   **`Auth Only`** — the CI token then bypasses interactive OTP
+   for automation. (Auth-and-Writes mode forces OTP prompts and
+   won't work in CI.)
+3. **Mint the token**: Profile → Access Tokens → Generate New
+   Token → **Granular Access Token**. Permission: **Read and
+   write**. Packages and scopes: **`@helly25`**. Expiration: your
+   rotation horizon (365d is a reasonable default). Copy the
+   token immediately — npm shows it once.
+4. **Store as repo secret**: GitHub → repo → Settings → Secrets
+   and variables → Actions → New repository secret. Name
+   `NPM_TOKEN`, value the token.
+
+### Per-release flow
+
+The workflow runs automatically on the GitHub Release-published
+event from step 1 — no extra action needed for normal releases.
+Watch progress at
+`https://github.com/helly25/coderef/actions/workflows/npm_publish.yml`.
+
+For ad-hoc / retro-publish (e.g. a tag pushed before this workflow
+existed, or a re-publish after a transient registry failure):
 
 ```bash
-cd /tmp && rm -rf coderef-npm-test && mkdir coderef-npm-test
-cd coderef-npm-test && npm init -y >/dev/null
-# Before publish, point at the local path:
-npm install --no-audit --no-fund "$REPO_ROOT/npm/coderef"
-./node_modules/.bin/coderef --version            # must print engine version
-```
-
-Publish:
-
-```bash
-cd "$REPO_ROOT/npm/coderef"
-npm publish --access public                      # public scope @helly25/
+gh workflow run npm_publish.yml -f tag=v<X.Y.Z>
+gh run watch                                     # follow the run
 ```
 
 Verify on npm:
 
 ```bash
 npm view @helly25/coderef version
+```
+
+### Manual fallback
+
+If the workflow is broken and you need to publish from a local
+machine, the `NPM_TOKEN` is in keychain on the publisher's box;
+retrieve and use it for a one-off:
+
+```bash
+export NODE_AUTH_TOKEN=$(security find-generic-password -a "$USER" -s NPM_TOKEN -w)
+cd "$REPO_ROOT/npm/coderef"
+echo "//registry.npmjs.org/:_authToken=$NODE_AUTH_TOKEN" > ~/.npmrc
+npm publish --access public
+rm ~/.npmrc                                      # don't leave it lying around
+```
+
+Test the install against the local checkout first if you want a
+dry run:
+
+```bash
+cd /tmp && rm -rf coderef-npm-test && mkdir coderef-npm-test
+cd coderef-npm-test && npm init -y >/dev/null
+npm install --no-audit --no-fund "$REPO_ROOT/npm/coderef"
+./node_modules/.bin/coderef --version            # must print engine version
 ```
 
 ## 3. VSCode marketplace (extension VSIX)
