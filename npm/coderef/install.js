@@ -34,12 +34,18 @@ const BIN_DEST = path.join(
 
 function main() {
   if (process.env.CODEREF_BINARY_PATH) {
+    if (!isNativeBinary(process.env.CODEREF_BINARY_PATH)) {
+      fail(
+        "coderef-npm: CODEREF_BINARY_PATH (" + process.env.CODEREF_BINARY_PATH +
+          ") doesn't look like a native binary — refusing to install it.",
+      );
+    }
     install(process.env.CODEREF_BINARY_PATH, "env CODEREF_BINARY_PATH");
     return;
   }
 
   const onPath = which(process.platform === "win32" ? "coderef.exe" : "coderef");
-  if (onPath && !sameFile(onPath, BIN_DEST)) {
+  if (onPath && !sameFile(onPath, BIN_DEST) && isNativeBinary(onPath)) {
     install(onPath, "found on PATH");
     return;
   }
@@ -255,6 +261,57 @@ function sameFile(a, b) {
   } catch {
     return false;
   }
+}
+
+// Detect whether a file looks like a native executable rather than a
+// shell/node script. We otherwise risk copying *this very wrapper* —
+// when `npm install -g @helly25/coderef` runs a second time, the npm
+// shim left by the first install sits at /opt/homebrew/bin/coderef on
+// macOS (or equivalents on Linux/Windows) and matches the PATH lookup.
+// Copying the shim into bin/coderef makes the wrapper spawn itself,
+// causing an infinite recursion the user only sees as a silent hang.
+//
+// Magic-byte sniff is enough — we don't need a full ELF parser.
+// Native magics:
+//   ELF (Linux):           7F 45 4C 46
+//   Mach-O single-arch:    CF FA ED FE (64-bit) / CE FA ED FE (32-bit)
+//                          and the FE ED FA CF / FE ED FA CE byte-swaps
+//   Mach-O fat/universal:  CA FE BA BE (FAT_MAGIC) / CA FE BA BF
+//                          (FAT_MAGIC_64) — `/bin/ls` and any release-
+//                          built macOS binary lipo'd across arches
+//                          starts this way.
+//   PE (Windows):          4D 5A ("MZ")
+// Scripts start with `23 21` (`#!`) which is what we want to reject —
+// that's how the "found-on-PATH = the npm wrapper itself" case sneaks
+// through if we don't sniff.
+function isNativeBinary(p) {
+  let buf;
+  try {
+    const fd = fs.openSync(p, "r");
+    buf = Buffer.alloc(4);
+    fs.readSync(fd, buf, 0, 4, 0);
+    fs.closeSync(fd);
+  } catch {
+    return false;
+  }
+  if (buf.length < 2) return false;
+  // Reject scripts: #! ...
+  if (buf[0] === 0x23 && buf[1] === 0x21) return false;
+  // ELF
+  if (buf[0] === 0x7f && buf[1] === 0x45 && buf[2] === 0x4c && buf[3] === 0x46) return true;
+  // Mach-O 64-bit (and endian-swapped variants)
+  if (buf[0] === 0xcf && buf[1] === 0xfa && buf[2] === 0xed && buf[3] === 0xfe) return true;
+  if (buf[0] === 0xfe && buf[1] === 0xed && buf[2] === 0xfa && buf[3] === 0xcf) return true;
+  if (buf[0] === 0xfe && buf[1] === 0xed && buf[2] === 0xfa && buf[3] === 0xce) return true;
+  // Mach-O 32-bit (mostly historical)
+  if (buf[0] === 0xce && buf[1] === 0xfa && buf[2] === 0xed && buf[3] === 0xfe) return true;
+  // Mach-O Universal / fat binary (FAT_MAGIC + FAT_MAGIC_64). NB: this
+  // is also Java's .class magic by coincidence, but a .class file isn't
+  // a coderef binary so the false-positive surface is academic.
+  if (buf[0] === 0xca && buf[1] === 0xfe && buf[2] === 0xba && (buf[3] === 0xbe || buf[3] === 0xbf)) return true;
+  // Windows PE
+  if (buf[0] === 0x4d && buf[1] === 0x5a) return true;
+  return false;
 }
 
 function fail(msg) {
