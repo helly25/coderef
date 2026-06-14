@@ -40,15 +40,15 @@ Triggers the cross-build in `.github/workflows/release.yml`. Produces
 the four platform tarballs the npm wrapper downloads at install time.
 
 ```bash
-git tag v0.2.1 -m "coderef v0.2.1"
-git push origin v0.2.1
+git tag v0.2.2 -m "coderef v0.2.2"
+git push origin v0.2.2
 ```
 
-Then watch `gh run watch --branch v0.2.1` until the `release` job
+Then watch `gh run watch --branch v0.2.2` until the `release` job
 shows green. Verify:
 
 ```bash
-gh release view v0.2.1 --json assets --jq '.assets[].name'
+gh release view v0.2.2 --json assets --jq '.assets[].name'
 ```
 
 Expect 8 entries (4 platforms × 2 files: archive + `.sha256`).

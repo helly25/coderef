@@ -7,6 +7,20 @@ versions follow [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+## v0.2.2 — 2026-06-14
+
+### Fixed
+
+- **npm wrapper `install.js` no longer copies a script as if it were a
+  binary**, fixing the infinite-recursion silent hang where the second
+  `npm install -g @helly25/coderef` after a v0.2.1 install would copy
+  the npm shim left by the prior install (a `#!/usr/bin/env node`
+  script) into `bin/coderef`, so the wrapper spawned itself
+  recursively. `install.js` now sniffs the magic bytes of any candidate
+  before copying — accepts ELF, Mach-O single-arch, Mach-O Universal
+  (`CA FE BA BE`, what `lipo` produces and what `/bin/ls` is on macOS),
+  and PE; rejects anything beginning with `#!`.
+
 ## v0.2.1 — 2026-06-14
 
 ### Highlights
