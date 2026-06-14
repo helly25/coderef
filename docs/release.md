@@ -84,22 +84,66 @@ npm view @helly25/coderef version
 
 ## 3. VSCode marketplace (extension VSIX)
 
-Needs `VSCE_PAT` from Azure DevOps (https://dev.azure.com →
-User Settings → Personal Access Tokens → Marketplace › Manage scope).
-This channel is independent of the CLI release — the VSIX bundles
-its own WASM via `scripts/bundle-wasm.cjs`.
+Automated by `.github/workflows/marketplace.yml`. The workflow fires
+on the same tag push that drives step 1, builds the VSIX in CI (Rust
++ wasm32 + wasm-pack + Node), uploads it as a downloadable artifact,
+and calls `vsce publish` using the `VSCE_PAT` repo secret. This
+channel is independent of step 1 — the VSIX bundles its own WASM
+via `scripts/bundle-wasm.cjs`.
+
+### One-time setup
+
+1. **Mint the PAT**: https://dev.azure.com → User Settings → Personal
+   Access Tokens → New Token. Organization: **All accessible
+   organizations**. Scopes: **Custom defined → Marketplace → Manage**
+   (nothing else — least privilege).
+2. **Store as repo secret**: GitHub → repo → Settings → Secrets and
+   variables → Actions → New repository secret. Name `VSCE_PAT`,
+   value is the token. Once stored, GitHub redacts it from all logs.
+
+### Per-release flow
+
+The workflow runs automatically on the tag push from step 1 — no
+extra action needed for normal releases. Watch progress at
+`https://github.com/helly25/coderef/actions/workflows/marketplace.yml`.
+
+For ad-hoc / retro-publish (e.g. a tag pushed before this workflow
+existed, or a re-publish after a marketplace-side issue), trigger
+via `workflow_dispatch`:
 
 ```bash
-cd "$REPO_ROOT/extension"
-npm run package                                  # produces coderef-<ver>.vsix
-ls -la coderef-*.vsix                            # sanity-check the size
-vsce publish                                     # reads VSCE_PAT from env
+gh workflow run marketplace.yml -f tag=v<X.Y.Z>
+gh run watch                                     # follow the run
 ```
 
 Verify on the marketplace:
 
 ```bash
-vsce show helly25.coderef
+npx vsce show helly25.coderef --json | jq '.versions[0]'
+```
+
+### Manual fallback
+
+If the workflow is broken and you need to publish from a local
+machine:
+
+```bash
+export VSCE_PAT=$(security find-generic-password -a "$USER" -s VSCE_PAT -w)
+cd "$REPO_ROOT/extension"
+npm install --no-audit --no-fund
+npm run package                                  # produces coderef-<ver>.vsix
+ls -la coderef-*.vsix
+npx vsce publish --packagePath coderef-<ver>.vsix
+```
+
+Note: `npm run package` calls `scripts/bundle-wasm.cjs`, which
+requires `rustup`-managed `rustc` with `wasm32-unknown-unknown` on
+`$PATH`. If `which rustc` resolves to a brew-managed binary, the
+build will fail; either `brew unlink rust` or prepend the rustup
+toolchain bin:
+
+```bash
+export PATH="$HOME/.rustup/toolchains/$(rustup show active-toolchain | awk '{print $1}')/bin:$PATH"
 ```
 
 ## Tag → publish window: minutes, not hours

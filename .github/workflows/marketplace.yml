@@ -1,0 +1,93 @@
+name: Marketplace Publish
+
+# Publishes the VSCode extension (helly25.coderef) to the marketplace.
+# Independent of release.yml — the VSIX bundles its own WASM via
+# scripts/bundle-wasm.cjs, so this channel doesn't depend on the
+# GitHub Releases CLI binaries being present yet.
+#
+# Triggers:
+#   - tag push (zero-touch publish per release; matches release.yml)
+#   - workflow_dispatch with a `tag` input (ad-hoc / retro-publish a
+#     tag that pre-dates this workflow).
+#
+# Required repo secret: VSCE_PAT — an Azure DevOps Personal Access
+# Token with scope `Marketplace > Manage` and Organization
+# `All accessible organizations`. See docs/release.md §3.
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+      - "v*.*.*-*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to publish (e.g. v0.2.1). Must already exist on the remote."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish helly25.coderef
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # On tag push, github.ref is refs/tags/<tag>. On
+          # workflow_dispatch, inputs.tag is e.g. "v0.2.1" — checkout
+          # accepts either form.
+          ref: ${{ inputs.tag || github.ref }}
+
+      # Mirrors the toolchain setup from ci.yml's `extension` job so
+      # any drift between CI build and publish build is obvious.
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install
+          rustup target add wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: marketplace-${{ hashFiles('Cargo.lock') }}
+
+      - name: Install wasm-pack
+        run: curl -fsSL https://rustwasm.github.io/wasm-pack/installer/init.sh | sh
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies (extension)
+        working-directory: extension
+        run: npm install --no-audit --no-fund
+
+      - name: Package VSIX
+        working-directory: extension
+        run: npm run package
+
+      # Upload the VSIX so humans can download it from the run page
+      # for inspection — handy when debugging a failed publish.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coderef-vsix
+          path: extension/coderef-*.vsix
+          if-no-files-found: error
+
+      - name: vsce publish
+        working-directory: extension
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          if [ -z "$VSCE_PAT" ]; then
+            echo "::error::VSCE_PAT repo secret is not set. Add it at Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+          vsix=$(ls coderef-*.vsix | head -1)
+          echo "publishing $vsix"
+          npx vsce publish --packagePath "$vsix"
+
+      - name: Verify marketplace listing
+        working-directory: extension
+        run: npx vsce show helly25.coderef --json | jq '{name, displayName, latestVersion: .versions[0].version}'
