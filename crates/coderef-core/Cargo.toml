@@ -49,4 +49,5 @@ indexmap     = { workspace = true }
 # modules that use them).
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ignore       = { workspace = true }
+globset      = { workspace = true }
 ureq         = { workspace = true }

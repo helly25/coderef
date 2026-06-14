@@ -151,6 +151,35 @@ pub fn verify_changes(
                         .get(&key)
                         .is_some_and(|&(start, end)| diff.intersects(path, start, end))
                 }
+                // Glob target: `/path/*.md{any|all}`. Match the
+                // pattern against the diff's changed-file list.
+                Target::FileGlob { pattern, flag } => {
+                    let stripped = pattern.trim_start_matches('/');
+                    let glob_result = globset::Glob::new(stripped);
+                    if let Ok(glob) = glob_result {
+                        let matcher = glob.compile_matcher();
+                        let touched = diff.files();
+                        let matched_count = touched.iter().filter(|f| matcher.is_match(f)).count();
+                        match flag {
+                            // `any`: at least one matched-and-changed.
+                            // `all` v0.2 semantics: same as `any` — the
+                            // strict "every workspace file matching
+                            // the glob must change" form needs a full
+                            // workspace enumeration that the verifier
+                            // doesn't have at this layer. Tracked as
+                            // a v0.3 follow-up in DESIGN §10.2.
+                            super::parse::GlobFlag::Any | super::parse::GlobFlag::All => {
+                                matched_count > 0
+                            }
+                        }
+                    } else {
+                        // A malformed glob can't be satisfied — treat
+                        // as missing-target. (The marker parser
+                        // doesn't validate glob syntax to match the
+                        // relaxed file-target parse.)
+                        false
+                    }
+                }
             };
             if !hit {
                 let msg = format!(
@@ -242,6 +271,13 @@ fn format_target(t: &Target) -> String {
         Target::FileLineRange { path, start, end } => format!("{path}:{start}-{end}"),
         Target::FileAnchor { path, anchor } => format!("{path}#{anchor}"),
         Target::FileLabel { path, label } => format!("{path}:{label}"),
+        Target::FileGlob { pattern, flag } => {
+            let flag_str = match flag {
+                super::parse::GlobFlag::Any => "any",
+                super::parse::GlobFlag::All => "all",
+            };
+            format!("{pattern}{{{flag_str}}}")
+        }
     }
 }
 
@@ -499,6 +535,67 @@ mod tests {
         let r = verify_changes(&[block_a], &[], &cl);
         assert_eq!(r.violations.len(), 1);
         assert_eq!(r.violations[0].kind, "missing-target");
+    }
+
+    #[test]
+    fn test_glob_target_matches_any_changed_file() {
+        let b = IfChangeBlock {
+            file: "src/a.rs".into(),
+            line_start: 1,
+            line_end: 3,
+            id: None,
+            targets: vec![Target::FileGlob {
+                pattern: "/docs/*.md".into(),
+                flag: super::super::parse::GlobFlag::Any,
+            }],
+            no_verify_reason: None,
+        };
+        let cl =
+            ChangedLines::from_pairs(&[("src/a.rs", &[(2, 2)]), ("docs/security.md", &[(50, 50)])]);
+        let r = verify_changes(&[b], &[], &cl);
+        assert!(r.passed(), "{r:#?}");
+    }
+
+    #[test]
+    fn test_glob_target_no_matching_file_changed_fails() {
+        let b = IfChangeBlock {
+            file: "src/a.rs".into(),
+            line_start: 1,
+            line_end: 3,
+            id: None,
+            targets: vec![Target::FileGlob {
+                pattern: "/docs/*.md".into(),
+                flag: super::super::parse::GlobFlag::Any,
+            }],
+            no_verify_reason: None,
+        };
+        // src/a.rs changed; no docs/*.md changed.
+        let cl = ChangedLines::from_pairs(&[("src/a.rs", &[(2, 2)])]);
+        let r = verify_changes(&[b], &[], &cl);
+        assert_eq!(r.violations.len(), 1);
+        assert_eq!(r.violations[0].kind, "missing-target");
+        assert!(r.violations[0].message.contains("/docs/*.md{any}"));
+    }
+
+    #[test]
+    fn test_glob_target_doublestar_recursive_match() {
+        let b = IfChangeBlock {
+            file: "src/a.rs".into(),
+            line_start: 1,
+            line_end: 3,
+            id: None,
+            targets: vec![Target::FileGlob {
+                pattern: "/docs/**/*.md".into(),
+                flag: super::super::parse::GlobFlag::Any,
+            }],
+            no_verify_reason: None,
+        };
+        let cl = ChangedLines::from_pairs(&[
+            ("src/a.rs", &[(2, 2)]),
+            ("docs/api/v2/index.md", &[(1, 1)]),
+        ]);
+        let r = verify_changes(&[b], &[], &cl);
+        assert!(r.passed(), "{r:#?}");
     }
 
     #[test]
