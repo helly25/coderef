@@ -11,7 +11,7 @@
 //! per-file scanner + host-side workspace walker. Verifier and the
 //! VSCode/WASM bindings land in subsequent PRs per `DESIGN.md` §20.
 
-#![doc(html_root_url = "https://docs.rs/coderef-core/0.1.0")]
+#![doc(html_root_url = "https://docs.rs/coderef-core/0.2.0")]
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod anchor;
