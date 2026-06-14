@@ -39,10 +39,11 @@ jobs:
             asset_suffix: linux-arm64
             archive_ext: tar.gz
             cross: true
-          - target: x86_64-apple-darwin
-            os: macos-13
-            asset_suffix: macos-x64
-            archive_ext: tar.gz
+          # x86_64-apple-darwin (Intel Mac) intentionally absent. Apple
+          # stopped shipping Intel hardware in 2023; GitHub's macos-13
+          # runner queue is the slowest in the matrix and the platform's
+          # share of installs is negligible. aarch64-apple-darwin
+          # below covers every Mac sold since late 2020.
           - target: aarch64-apple-darwin
             os: macos-latest
             asset_suffix: macos-arm64
