@@ -7,6 +7,19 @@ versions follow [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+### Changed
+
+- **`npm_publish.yml` workflow now triggers on tag push** instead of
+  the previously-used `release: types: [published]` event. The former
+  shape never fired because GitHub Actions suppresses workflows
+  triggered by events caused by a workflow's own `GITHUB_TOKEN`
+  (anti-recursion). The new shape adds a poll-and-wait step that
+  blocks up to 30 minutes for `release.yml` to finish building and
+  creating the GitHub Release, then publishes. Effect for releasers:
+  pushing `vX.Y.Z` now fires all three channels (GitHub Release, npm,
+  VSCode Marketplace) zero-touch — no manual `gh workflow run` for
+  npm anymore.
+
 ## v0.2.2 — 2026-06-14
 
 ### Fixed

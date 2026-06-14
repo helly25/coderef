@@ -56,11 +56,16 @@ Expect 8 entries (4 platforms × 2 files: archive + `.sha256`).
 ## 2. npm wrapper
 
 Automated by `.github/workflows/npm_publish.yml`. The workflow fires
-on `release: types: [published]` — i.e. as soon as step 1 finishes
-creating the GitHub Release — so there's no window where the
-wrapper exists on npm but the binaries it tries to download don't
-exist yet. The job double-checks `gh release view` before calling
-`npm publish` and refuses to publish into a broken state.
+on the same tag push that drives step 1 and waits (polls up to 30
+minutes) for release.yml to create the GitHub Release with assets
+before calling `npm publish`. There's no window where the wrapper
+exists on npm but the binaries it tries to download don't.
+
+(We originally wired this on `release: types: [published]`, but
+that event is suppressed by GitHub Actions when the originating
+`gh release create` ran with the workflow's built-in `GITHUB_TOKEN`
+— an anti-recursion safeguard. The tag-push trigger + wait loop
+avoids that gotcha without needing a separate PAT.)
 
 ### One-time setup
 
