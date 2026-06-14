@@ -2106,11 +2106,11 @@ Whitespace and intra-`()` newlines are tolerated. A target token is one of:
 
 Each target may carry one suffix flag in `{...}`:
 
-- `{any}` — at least one matched element must change (default for globs).
-- `{all}` — every matched element must change.
-- `{soft}` — emit a warning instead of an error if the constraint isn't met.
+- `{any}` — at least one matched element must change (default for globs). *Shipped in v0.2.*
+- `{all}` — every matched element must change. *Shipped in v0.2; v0.2 semantics are relaxed to "at least one matched-and-changed" because the verifier doesn't enumerate the full workspace at this layer. The strict form lands in v0.3 alongside a workspace-enumeration pass.*
+- `{soft}` — emit a warning instead of an error if the constraint isn't met. *v0.3 follow-up alongside richer severity tuning.*
 
-Example: `/docs/api/*.md{all}` requires *every* matching file to be touched.
+Example: `/docs/api/*.md{any}` requires at least one of the matching files to be touched.
 
 Variable interpolation is allowed in target tokens with the namespaces listed
 in §8.4 (notably *no* `file:` or `ref:` — targets are computed per-block, not

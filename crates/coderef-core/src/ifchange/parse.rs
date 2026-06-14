@@ -77,10 +77,26 @@ pub enum Target {
     /// when the `:` is followed by a non-numeric token; line/range
     /// forms still win when the suffix is digits or `N-M`.
     FileLabel { path: String, label: String },
+    /// Glob target: `/path/*.md`, `**/*.test.rs`, etc.
+    /// `flag = Any`  → at least one matched file must change (default
+    ///                for globs).
+    /// `flag = All`  → every matched file must change.
+    /// Glob patterns are recognised by the presence of `*` (or `?` /
+    /// `[...]`) in the path.
+    FileGlob { pattern: String, flag: GlobFlag },
+}
+
+/// Suffix flag on a glob target. DESIGN.md §10.2. v0.2 ships `Any`
+/// (default) and `All`. The `{soft}` flag (warning severity) is a
+/// v0.3 follow-up alongside richer severity tuning.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GlobFlag {
+    Any,
+    All,
 }
 
 impl Target {
-    /// Path component shared across all target variants.
+    /// Path / pattern component shared across all target variants.
     #[must_use]
     pub fn path(&self) -> &str {
         match self {
@@ -89,6 +105,7 @@ impl Target {
             | Self::FileLineRange { path, .. }
             | Self::FileAnchor { path, .. }
             | Self::FileLabel { path, .. } => path,
+            Self::FileGlob { pattern, .. } => pattern,
         }
     }
 }
@@ -243,6 +260,30 @@ fn split_targets(s: &str) -> Vec<String> {
     s.split(',').map(|part| part.trim().to_string()).collect()
 }
 
+/// Strip a trailing `{any}` or `{all}` glob-flag if present.
+///
+/// Returns `(stripped_body, Some(flag))` on success; `(raw, None)`
+/// when no flag is present. An unknown flag (e.g. `{soft}` in v0.2
+/// or any other token between braces) is rejected as malformed —
+/// catches typos like `{andy}` rather than silently treating them
+/// as the default.
+fn strip_glob_flag(raw: &str) -> Result<(&str, Option<GlobFlag>), ()> {
+    if !raw.ends_with('}') {
+        return Ok((raw, None));
+    }
+    let Some(open) = raw.rfind('{') else {
+        return Ok((raw, None));
+    };
+    let body = &raw[open + 1..raw.len() - 1];
+    let head = &raw[..open];
+    let flag = match body {
+        "any" => GlobFlag::Any,
+        "all" => GlobFlag::All,
+        _ => return Err(()),
+    };
+    Ok((head, Some(flag)))
+}
+
 /// Strip matching surrounding `'...'` or `"..."` quotes if present.
 /// Returns the original slice unchanged when the quotes don't match
 /// or aren't present.
@@ -265,13 +306,38 @@ fn strip_matching_quotes(s: &str) -> &str {
 /// - `path`
 /// - `path:N`
 /// - `path:N-M`
+/// - `path:label-name`
 /// - `path#anchor`
+/// - `path-glob` (containing `*` / `?` / `[...]`)
+/// - any of the above with a trailing `{any}` or `{all}` flag (only
+///   meaningful on glob patterns; for non-globs the flag is parsed
+///   but ignored)
 ///
-/// Anything else is `MalformedTarget` at the caller. The `#`
-/// disambiguator is checked before `:` so a path containing both
-/// (e.g. `docs/x.md#anchor`) is parsed as anchor-only — line/range
-/// targets and anchor targets are mutually exclusive in v0.2.
+/// Anything else is `MalformedTarget` at the caller. Flag-parsing
+/// happens first, then `#` vs `:` disambiguator.
 fn parse_target(raw: &str) -> Result<Target, ()> {
+    // Strip a trailing `{any}` or `{all}` flag if present.
+    let (raw, flag) = strip_glob_flag(raw)?;
+
+    // Glob detection: pattern characters anywhere in the body trigger
+    // the glob branch. Globs are mutually exclusive with `:` /  `#`
+    // sub-target syntax — once we see a glob meta-character we treat
+    // the whole token as a glob pattern.
+    if raw.contains('*') || raw.contains('?') || raw.contains('[') {
+        if raw.is_empty() {
+            return Err(());
+        }
+        return Ok(Target::FileGlob {
+            pattern: raw.to_string(),
+            flag: flag.unwrap_or(GlobFlag::Any),
+        });
+    }
+
+    // A flag on a non-glob target is meaningless (DESIGN §10.2's
+    // table says these flags apply to globs); accept silently to
+    // preserve forward-compat with `{soft}` rolling out as a
+    // general severity modifier later.
+    let _ = flag;
     // Anchor form `path#anchor` first.
     if let Some((path, anchor)) = raw.split_once('#') {
         if path.is_empty() || anchor.is_empty() {
@@ -751,5 +817,101 @@ x
         assert!(matches!(ts[0], Target::FileLabel { .. }));
         assert!(matches!(ts[1], Target::FileLine { .. }));
         assert!(matches!(ts[2], Target::File { .. }));
+    }
+
+    #[test]
+    fn test_parse_glob_target_defaults_to_any() {
+        let src = "\
+// IfChange
+x
+// ThenChange(/docs/api/*.md)
+";
+        let report = extract_blocks(src, "a.rs");
+        assert!(report.errors.is_empty(), "{:#?}", report.errors);
+        assert!(matches!(
+            report.blocks[0].targets[0],
+            Target::FileGlob { ref pattern, flag: GlobFlag::Any }
+                if pattern == "/docs/api/*.md"
+        ));
+    }
+
+    #[test]
+    fn test_parse_glob_target_with_all_flag() {
+        let src = "\
+// IfChange
+x
+// ThenChange(/docs/api/*.md{all})
+";
+        let report = extract_blocks(src, "a.rs");
+        assert!(report.errors.is_empty(), "{:#?}", report.errors);
+        assert!(matches!(
+            report.blocks[0].targets[0],
+            Target::FileGlob {
+                flag: GlobFlag::All,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_parse_glob_target_with_any_flag_explicit() {
+        let src = "\
+// IfChange
+x
+// ThenChange(/docs/**/*.md{any})
+";
+        let report = extract_blocks(src, "a.rs");
+        assert!(report.errors.is_empty(), "{:#?}", report.errors);
+        assert!(matches!(
+            report.blocks[0].targets[0],
+            Target::FileGlob {
+                flag: GlobFlag::Any,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_parse_unknown_glob_flag_rejected() {
+        // `{soft}` is documented but deferred; the parser should
+        // reject unknown flags rather than silently dropping them.
+        let src = "\
+// IfChange
+x
+// ThenChange(/docs/*.md{soft})
+";
+        let report = extract_blocks(src, "a.rs");
+        assert!(report.blocks[0].targets.is_empty());
+        assert_eq!(report.errors.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_glob_target_with_question_mark() {
+        let src = "\
+// IfChange
+x
+// ThenChange(/docs/?.md)
+";
+        let report = extract_blocks(src, "a.rs");
+        assert!(report.errors.is_empty(), "{:#?}", report.errors);
+        assert!(matches!(
+            report.blocks[0].targets[0],
+            Target::FileGlob { .. }
+        ));
+    }
+
+    #[test]
+    fn test_parse_glob_and_label_coexist_in_same_marker() {
+        let src = "\
+// IfChange
+x
+// ThenChange(/docs/*.md, /a.rs:my-block)
+";
+        let report = extract_blocks(src, "a.rs");
+        assert!(report.errors.is_empty(), "{:#?}", report.errors);
+        let ts = &report.blocks[0].targets;
+        assert_eq!(ts.len(), 2);
+        assert!(matches!(ts[0], Target::FileGlob { .. }));
+        assert!(matches!(ts[1], Target::FileLabel { .. }));
     }
 }
