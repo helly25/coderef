@@ -7,15 +7,6 @@ versions follow [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
-### Removed
-
-- **x86_64-apple-darwin (Intel Mac) release binary.** Apple stopped
-  shipping Intel hardware in 2023 and GitHub's `macos-13` runner queue
-  was the slowest in the release matrix. The npm wrapper now emits an
-  `unsupported platform/arch` error for `darwin x64` instead of
-  trying to download a missing asset. Apple Silicon Macs (the
-  `aarch64-apple-darwin` binary) are unaffected.
-
 ## v0.2.0 — 2026-06-14
 
 ### Highlights
@@ -56,6 +47,15 @@ versions follow [SemVer](https://semver.org/spec/v2.0.0.html).
   self-check that fails CI if any newly-added job isn't wired into the
   required-check list (PR #32, #33). Synced to mbo, bashtest, proto,
   vscode-iwyu, mbo-tools.
+
+### Removed
+
+- **x86_64-apple-darwin (Intel Mac) release binary.** Apple stopped
+  shipping Intel hardware in 2023 and GitHub's `macos-13` runner queue
+  was the slowest in the release matrix (PR #43). The npm wrapper now
+  emits an `unsupported platform/arch` error for `darwin x64` instead
+  of trying to download a missing asset. Apple Silicon Macs (the
+  `aarch64-apple-darwin` binary) are unaffected.
 
 ### Fixed
 
