@@ -217,6 +217,77 @@ fn integration_anchor_target_in_thenchange_fails_when_target_file_unchanged() {
 }
 
 #[test]
+fn integration_label_target_resolves_to_named_block_and_passes() {
+    let root = tmpdir("label-pass");
+    // src/a.py block targets the `params` label in docs/x.md.
+    // docs/x.md contains `IfChange('params')`.
+    write(
+        &root,
+        "src/a.py",
+        "# IfChange\nFOO = 1\n# ThenChange(/docs/x.md:params)\n",
+    );
+    write(
+        &root,
+        "docs/x.md",
+        "# Section\n\n# IfChange('params')\nDETAIL = 2\n# ThenChange\n",
+    );
+    // Diff touches src/a.py line 2 and docs/x.md line 4 (inside the
+    // 'params' block which spans lines 3..5).
+    let diff = "\
++++ b/src/a.py
+@@ -2 +2 @@
+-FOO = 0
++FOO = 1
++++ b/docs/x.md
+@@ -4 +4 @@
+-DETAIL = 1
++DETAIL = 2
+";
+    let cfg = Config::from_jsonc_str(CONFIG).unwrap();
+    let (blocks, errors) = scan_workspace_blocks(&root, &cfg).unwrap();
+    assert!(errors.is_empty(), "{errors:#?}");
+    let cl = parse_unified_diff(diff);
+    let report = verify_changes(&blocks, &errors, &cl);
+    assert!(report.passed(), "{report:#?}");
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn integration_label_target_diff_outside_named_block_fails() {
+    let root = tmpdir("label-miss");
+    write(
+        &root,
+        "src/a.py",
+        "# IfChange\nFOO = 1\n# ThenChange(/docs/x.md:params)\n",
+    );
+    // Five preamble lines so the IfChange('params') block sits
+    // at lines 6..8 — well past the diff's line 1 change.
+    write(
+        &root,
+        "docs/x.md",
+        "L1\nL2\nL3\nL4\nL5\n# IfChange('params')\nDETAIL = 2\n# ThenChange\n",
+    );
+    let diff = "\
++++ b/src/a.py
+@@ -2 +2 @@
+-FOO = 0
++FOO = 1
++++ b/docs/x.md
+@@ -1 +1 @@
+-L1
++L1 updated
+";
+    let cfg = Config::from_jsonc_str(CONFIG).unwrap();
+    let (blocks, errors) = scan_workspace_blocks(&root, &cfg).unwrap();
+    let cl = parse_unified_diff(diff);
+    let report = verify_changes(&blocks, &errors, &cl);
+    assert_eq!(report.violations.len(), 1);
+    assert_eq!(report.violations[0].kind, "missing-target");
+    assert!(report.violations[0].message.contains(":params"));
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn integration_unrelated_diff_does_not_fire_blocks() {
     let root = tmpdir("noise");
     write(&root, "src/a.py", "# IfChange(grp)\nX = 1\n# ThenChange\n");
