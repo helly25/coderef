@@ -161,6 +161,62 @@ fn integration_no_verify_silences_violation() {
 }
 
 #[test]
+fn integration_anchor_target_in_thenchange_passes_when_target_file_changed() {
+    // ThenChange(/docs/security.md#hashing) on a block that's
+    // changed; the diff also touches docs/security.md → satisfied.
+    let root = tmpdir("anchor-pass");
+    write(
+        &root,
+        "src/hash.py",
+        "# IfChange\nHASH = 'argon2id'\n# ThenChange(/docs/security.md#hashing)\n",
+    );
+    write(&root, "docs/security.md", "# Hashing\n\nbody\n");
+    let diff = "\
++++ b/src/hash.py
+@@ -2 +2 @@
+-HASH = 'sha256'
++HASH = 'argon2id'
++++ b/docs/security.md
+@@ -3 +3 @@
+-old
++new
+";
+    let cfg = Config::from_jsonc_str(CONFIG).unwrap();
+    let (blocks, errors) = scan_workspace_blocks(&root, &cfg).unwrap();
+    assert!(errors.is_empty(), "{errors:#?}");
+    assert_eq!(blocks.len(), 1);
+    let cl = parse_unified_diff(diff);
+    let report = verify_changes(&blocks, &errors, &cl);
+    assert!(report.passed(), "{report:#?}");
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn integration_anchor_target_in_thenchange_fails_when_target_file_unchanged() {
+    let root = tmpdir("anchor-fail");
+    write(
+        &root,
+        "src/hash.py",
+        "# IfChange\nHASH = 'argon2id'\n# ThenChange(/docs/security.md#hashing)\n",
+    );
+    write(&root, "docs/security.md", "# Hashing\n");
+    let diff = "\
++++ b/src/hash.py
+@@ -2 +2 @@
+-HASH = 'sha256'
++HASH = 'argon2id'
+";
+    let cfg = Config::from_jsonc_str(CONFIG).unwrap();
+    let (blocks, errors) = scan_workspace_blocks(&root, &cfg).unwrap();
+    let cl = parse_unified_diff(diff);
+    let report = verify_changes(&blocks, &errors, &cl);
+    assert_eq!(report.violations.len(), 1);
+    assert_eq!(report.violations[0].kind, "missing-target");
+    assert!(report.violations[0].message.contains("#hashing"));
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn integration_unrelated_diff_does_not_fire_blocks() {
     let root = tmpdir("noise");
     write(&root, "src/a.py", "# IfChange(grp)\nX = 1\n# ThenChange\n");

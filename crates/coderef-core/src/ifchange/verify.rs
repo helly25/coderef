@@ -122,6 +122,13 @@ pub fn verify_changes(
                 Target::File { path } => diff.file_touched(path),
                 Target::FileLine { path, line } => diff.intersects(path, *line, *line),
                 Target::FileLineRange { path, start, end } => diff.intersects(path, *start, *end),
+                // Anchor target: the section under `#anchor` must
+                // change. v0.2 semantics (simple): the anchor must
+                // exist in the target file *and* any line in the file
+                // changed. A richer "heading-bounded range" check
+                // lands in v0.3 once we track heading line numbers
+                // (DESIGN §10.2 + §6.3).
+                Target::FileAnchor { path, .. } => diff.file_touched(path),
             };
             if !hit {
                 let msg = format!(
@@ -211,6 +218,7 @@ fn format_target(t: &Target) -> String {
         Target::File { path } => path.clone(),
         Target::FileLine { path, line } => format!("{path}:{line}"),
         Target::FileLineRange { path, start, end } => format!("{path}:{start}-{end}"),
+        Target::FileAnchor { path, anchor } => format!("{path}#{anchor}"),
     }
 }
 
@@ -367,6 +375,45 @@ mod tests {
         let b2 = block("b.rs", 10, 15, Some("auth-v3"), vec![]);
         let cl = ChangedLines::from_pairs(&[("a.rs", &[(2, 2)]), ("b.rs", &[(12, 12)])]);
         let r = verify_changes(&[b1, b2], &[], &cl);
+        assert!(r.passed(), "{r:#?}");
+    }
+
+    #[test]
+    fn test_anchor_target_unchanged_file_emits_missing_target() {
+        let b = block(
+            "src/code.rs",
+            1,
+            5,
+            None,
+            vec![Target::FileAnchor {
+                path: "docs/security.md".into(),
+                anchor: "hashing".into(),
+            }],
+        );
+        let cl = ChangedLines::from_pairs(&[("src/code.rs", &[(2, 2)])]);
+        let r = verify_changes(&[b], &[], &cl);
+        assert_eq!(r.violations.len(), 1);
+        assert_eq!(r.violations[0].kind, "missing-target");
+        assert!(r.violations[0].message.contains("docs/security.md#hashing"));
+    }
+
+    #[test]
+    fn test_anchor_target_changed_file_passes() {
+        let b = block(
+            "src/code.rs",
+            1,
+            5,
+            None,
+            vec![Target::FileAnchor {
+                path: "docs/security.md".into(),
+                anchor: "hashing".into(),
+            }],
+        );
+        let cl = ChangedLines::from_pairs(&[
+            ("src/code.rs", &[(2, 2)]),
+            ("docs/security.md", &[(50, 50)]),
+        ]);
+        let r = verify_changes(&[b], &[], &cl);
         assert!(r.passed(), "{r:#?}");
     }
 
