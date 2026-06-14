@@ -306,6 +306,11 @@ pub(super) fn check_category_mismatch(
 /// reference still resolves; the anchor just isn't verified. Surface
 /// as info so authors notice (e.g. they may have intended `.md` but
 /// typed `.text`).
+///
+/// Host-only: doesn't need to reach `crate::anchor` directly but is
+/// only ever called from `run_doctor_with_workspace`, which itself
+/// is gated.
+#[cfg(not(target_arch = "wasm32"))]
 pub(super) fn check_anchor_skipped_ext(
     cfg: &Config,
     refs: &[crate::reference::Reference],
@@ -379,6 +384,10 @@ pub(super) fn check_anchor_skipped_ext(
 /// and un-annotated headings, and the resolve config doesn't pin the
 /// slugifier to `pandoc`. The check reads each unique target file
 /// once.
+///
+/// Host-only: reads target files from disk and calls
+/// `crate::anchor::extract_headings`, both unavailable on `wasm32`.
+#[cfg(not(target_arch = "wasm32"))]
 pub(super) fn check_anchor_style_mismatch(
     cfg: &Config,
     refs: &[crate::reference::Reference],
@@ -463,6 +472,10 @@ pub(super) fn check_anchor_style_mismatch(
 /// `kind: "url"` / `kind: "local"` patterns (Levenshtein within
 /// `COMPOSABLE_TYPO_LEVENSHTEIN`, default 1) but fails to resolve.
 /// Usually a typo on a Shape C composable id.
+///
+/// Host-only: consumes `crate::ifchange` blocks, which only exist on
+/// non-wasm targets.
+#[cfg(not(target_arch = "wasm32"))]
 pub(super) fn check_coupled_composable_typo(
     cfg: &Config,
     blocks: &[crate::ifchange::IfChangeBlock],
@@ -541,6 +554,9 @@ pub(super) fn check_coupled_composable_typo(
 /// Does a Levenshtein-`max`-edit neighbour of `text` match `re`?
 /// v0.2 only handles `max == 1`; larger thresholds would explode the
 /// neighbour-enumeration cost without much practical value.
+///
+/// Only used by the host-only `check_coupled_composable_typo`.
+#[cfg(not(target_arch = "wasm32"))]
 fn levenshtein_near_match(re: &fancy_regex::Regex, text: &str, max: u32) -> bool {
     if max != 1 {
         return false;
