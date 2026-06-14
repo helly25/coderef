@@ -104,4 +104,8 @@ jobs:
 
       - name: Verify marketplace listing
         working-directory: extension
-        run: npx vsce show helly25.coderef --json | jq '{name, displayName, latestVersion: .versions[0].version}'
+        # NB: the jq object literal contains a colon (`latestVersion: .versions…`)
+        # which YAML reads as a mapping value boundary in unquoted scalars —
+        # use a block scalar (`|`) to keep the whole command as a single string.
+        run: |
+          npx vsce show helly25.coderef --json | jq '{name, displayName, latestVersion: .versions[0].version}'
