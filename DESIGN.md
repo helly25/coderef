@@ -1018,11 +1018,11 @@ alphabetical order; the position is configurable per category via
 
 #### 5.7.4 Doctor checks
 
-| Check                     | Severity | Trigger                                                                                                                                                                                                                                      |
-| ------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `category.unset`          | info     | `kind: "url"` pattern omits `category`. Doctor's hint lists the built-in names; the inferred fallback is `other`. *Shipped in v0.2.*                                                                                                         |
-| `category.mismatch`       | warning  | Captured values consistently start with a sigil (`@`, `/`, `http`) that contradicts the declared category. *Scan-dependent — designed; v0.3 deliverable alongside the references browser.*                                                   |
-| `category.tooBroadOther`  | info     | More than `integrity.maxOtherPatterns` (default 5) patterns share `category: "other"` after inference. *Shipped in v0.2; the workspace-level override knob lands with the visual editor in v0.3, the default ceiling is hard-coded for now.* |
+| Check                     | Severity | Trigger                                                                                                                                                                                                                                            |
+| ------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `category.unset`          | info     | `kind: "url"` pattern omits `category`. Doctor's hint lists the built-in names; the inferred fallback is `other`. *Shipped in v0.2.*                                                                                                               |
+| `category.mismatch`       | warning  | Captured values consistently start with a sigil (`@`, `/`, `http`) that contradicts the declared/inferred category. *Shipped in v0.2.* Default thresholds: ≥80% of matches share a sigil across ≥3 samples; per-pattern severity override applies. |
+| `category.tooBroadOther`  | info     | More than `integrity.maxOtherPatterns` (default 5) patterns share `category: "other"` after inference. *Shipped in v0.2; the workspace-level override knob lands with the visual editor in v0.3, the default ceiling is hard-coded for now.*       |
 
 ### 5.8 Per-pattern editor styling (v0.3)
 
@@ -1287,11 +1287,11 @@ on top.)
 
 #### 6.3.4 Doctor checks
 
-| Check                      | Severity                      | Trigger                                                                                                                                                                   |
-| -------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `anchor.unknown`           | per-pattern `severity.broken` | Captured anchor absent from target's slug set. *Shipped in v0.2 as `VerifyOutcome::AnchorNotFound` (broken outcome in the check report) with a Levenshtein-1 suggestion.* |
-| `anchor.styleMismatch`     | warning                       | Target contains Pandoc-style `{#id}` attributes but pattern's slugifier is `github` (or similar mismatches). *v0.3 follow-up.*                                            |
-| `anchor.skippedExt`        | info                          | Target's extension has no anchor parser; anchor checking was skipped. *v0.2 surfaces it via the runtime `Skipped` outcome; the doctor diagnostic lands in v0.3.*          |
+| Check                      | Severity                      | Trigger                                                                                                                                                                                                                                 |
+| -------------------------- | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `anchor.unknown`           | per-pattern `severity.broken` | Captured anchor absent from target's slug set. *Shipped in v0.2 as `VerifyOutcome::AnchorNotFound` (broken outcome in the check report) with a Levenshtein-1 suggestion.*                                                               |
+| `anchor.styleMismatch`     | warning                       | Target file mixes Pandoc-style `{#id}` and un-annotated headings while the pattern's slugifier is `github` (the default). *Shipped in v0.2.* Silent when the slugifier is explicitly `pandoc` / `gitlab` / etc.                         |
+| `anchor.skippedExt`        | info                          | Target carries a `#anchor` suffix but its extension isn't a recognised Markdown extension (`.md` / `.markdown`); anchor verification is skipped. *Shipped in v0.2* as a doctor diagnostic in addition to the runtime `Skipped` outcome. |
 
 #### 6.3.5 Why precise local checking matters
 
@@ -2273,10 +2273,10 @@ different files group together, and a future migration from
 `IfChange(some-string)` to `IfChange(JIRA(PROJ-123))` is non-disruptive
 provided both resolve to the same group key.
 
-Doctor's `coupled.composableTypo` check (an id text *almost* matches a
-pattern's regex but fails to resolve — usually a typo, Levenshtein
-within a small threshold) stays a v0.3 follow-up alongside the
-scan-dependent doctor pass.
+Doctor's `coupled.composableTypo` check fires when an id text
+*almost* matches a `url` / `local` pattern's regex (Levenshtein-1
+neighbour over insertion / deletion / substitution) but fails to
+resolve. Usually a typo on a Shape C composable id. *Shipped in v0.2.*
 
 ### 10.8 CLI
 

@@ -180,14 +180,16 @@ pub fn extract_blocks(content: &str, file: &str) -> MarkerParseReport {
                     });
                 }
             }
-            let id = cap.name("id").map(|m| {
-                let raw = m.as_str().trim();
-                // Strip surrounding matching single or double quotes
-                // so `IfChange('hash-params')` and `IfChange(hash-params)`
-                // produce the same id — the README's canonical
-                // example uses the quoted form.
-                strip_matching_quotes(raw).to_string()
-            });
+            // Capture the id with paren-balanced extraction so Shape C
+            // ids like `JIRA(PROJ-1234)` aren't truncated at the first
+            // `)`. We can't do this in the regex (fancy-regex doesn't
+            // support balanced groups portably); hand-rolled is small.
+            // Fall back to the regex's capture for ids without nested
+            // parens.
+            let m0 = cap.get(0).expect("group 0 always present");
+            let id = balanced_id_from(line, m0.start())
+                .or_else(|| cap.name("id").map(|m| m.as_str().trim().to_string()));
+            let id = id.map(|raw| strip_matching_quotes(raw.trim()).to_string());
             // Take the higher-priority NoVerify: same-line wins;
             // otherwise the line-above reason.
             let nv = this_no_verify.clone().or_else(|| prev_no_verify.clone());
@@ -282,6 +284,45 @@ fn strip_glob_flag(raw: &str) -> Result<(&str, Option<GlobFlag>), ()> {
         _ => return Err(()),
     };
     Ok((head, Some(flag)))
+}
+
+/// Extract the paren-balanced id text following `IfChange` on `line`,
+/// starting at `marker_start` (the position of the `I` in `IfChange`).
+///
+/// Returns `None` when the marker has no parens (Shape A) or the
+/// parens are malformed. Returns `Some("")` for bare `IfChange()`.
+/// Handles nested parens so `IfChange(JIRA(PROJ-1234))` yields
+/// `JIRA(PROJ-1234)` — what the v0.2 marker regex `[^)]*` truncated
+/// at the first `)`.
+fn balanced_id_from(line: &str, marker_start: usize) -> Option<String> {
+    // Skip past `IfChange` (8 chars; the regex matched it).
+    let after_keyword = marker_start.checked_add("IfChange".len())?;
+    let bytes = line.as_bytes();
+    if bytes.get(after_keyword) != Some(&b'(') {
+        return None;
+    }
+    let mut depth = 1usize;
+    let mut i = after_keyword + 1;
+    let start_inside = i;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    // Slice may not land on UTF-8 boundaries if the id
+                    // contains multi-byte chars; defensively use
+                    // `get` to bail out.
+                    return line.get(start_inside..i).map(str::to_string);
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    // Unbalanced parens — fall back to None so caller uses the regex
+    // capture (which truncated at first `)`, matching pre-fix behaviour).
+    None
 }
 
 /// Strip matching surrounding `'...'` or `"..."` quotes if present.
