@@ -1,0 +1,115 @@
+name: npm publish (@helly25/coderef wrapper)
+
+# Publishes the npm wrapper (@helly25/coderef) to https://registry.npmjs.org.
+# The wrapper itself doesn't ship a binary — its postinstall script
+# downloads the matching tarball from the corresponding GitHub
+# Release. So this channel depends on Channel 1 (release.yml)
+# completing first, otherwise `npm install -g @helly25/coderef@<X>`
+# 404s during postinstall.
+#
+# Triggers:
+#   - `release: types: [published]` — fires automatically once
+#     release.yml creates the GitHub Release. Future releases are
+#     zero-touch.
+#   - `workflow_dispatch { tag }` — ad-hoc / retro-publish. Useful
+#     for the very first run on a tag that pre-dates this workflow
+#     (v0.2.1), and for re-runs after a transient registry failure.
+#
+# Required repo secret: NPM_TOKEN — a Granular Access Token from
+# npmjs.com with `Read and write` permission on the `@helly25`
+# scope, and 2FA "Auth Only" mode on the publisher account so the
+# token bypasses interactive OTP. See docs/release.md §2.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to publish (e.g. v0.2.1). The matching GitHub Release must already exist."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish @helly25/coderef
+    runs-on: ubuntu-latest
+    steps:
+      # Fail fast if the secret isn't configured.
+      - name: Verify NPM_TOKEN secret is configured
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NPM_TOKEN" ]; then
+            echo "::error::NPM_TOKEN repo secret is not set. Add it at Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+
+      - name: Resolve tag
+        id: tag
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          REL_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          tag="${INPUT_TAG:-$REL_TAG}"
+          if [ -z "$tag" ]; then
+            echo "::error::No tag resolved from inputs.tag or release.tag_name"
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Publishing tag: $tag"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.tag.outputs.tag }}
+
+      # The wrapper's postinstall downloads from the GitHub Release.
+      # If the release doesn't exist yet (or has no assets), every
+      # subsequent `npm install @helly25/coderef@<X>` will fail until
+      # Channel 1 catches up. Refuse to publish into that broken
+      # window.
+      - name: Verify matching GitHub Release exists and has assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          assets=$(gh release view "$TAG" --json assets --jq '.assets | length' 2>/dev/null || echo "")
+          if [ -z "$assets" ] || [ "$assets" = "0" ]; then
+            echo "::error::GitHub Release $TAG doesn't exist or has 0 assets. Channel 1 (release.yml) must complete before Channel 2."
+            exit 1
+          fi
+          echo "GitHub Release $TAG has $assets asset(s) — safe to publish wrapper"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          # registry-url makes setup-node write a project-local
+          # .npmrc that reads NODE_AUTH_TOKEN at publish time.
+          registry-url: 'https://registry.npmjs.org/'
+
+      - name: npm publish
+        working-directory: npm/coderef
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public
+
+      - name: Verify package on npm registry
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        # The registry can take a few seconds to surface a fresh
+        # publish on its read-side. Poll briefly.
+        run: |
+          expected="${TAG#v}"
+          for i in 1 2 3 4 5; do
+            actual=$(npm view @helly25/coderef version 2>/dev/null || true)
+            if [ "$actual" = "$expected" ]; then
+              echo "@helly25/coderef@$actual is live"
+              exit 0
+            fi
+            echo "  attempt $i: registry shows '$actual', want '$expected' — retrying"
+            sleep 5
+          done
+          echo "::warning::registry didn't surface expected version within 25s; check https://www.npmjs.com/package/@helly25/coderef"
