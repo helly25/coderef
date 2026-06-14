@@ -99,6 +99,18 @@ pub fn verify_changes(
         }
     }
 
+    // Index by (file, label) → block range for `FileLabel` target
+    // lookups. The label *is* the IfChange id; the path is normalized
+    // by stripping a leading `/` so workspace-rooted targets match
+    // workspace-relative block paths.
+    let mut by_label: BTreeMap<(String, String), (u32, u32)> = BTreeMap::new();
+    for b in blocks {
+        if let Some(ref id) = b.id {
+            let normalized_path = b.file.trim_start_matches('/').to_string();
+            by_label.insert((normalized_path, id.clone()), (b.line_start, b.line_end));
+        }
+    }
+
     let mut violations = Vec::new();
     let mut changed_block_count = 0usize;
     let mut violating_block_count = 0usize;
@@ -129,6 +141,16 @@ pub fn verify_changes(
                 // lands in v0.3 once we track heading line numbers
                 // (DESIGN §10.2 + §6.3).
                 Target::FileAnchor { path, .. } => diff.file_touched(path),
+                // Label target: `path:label-name` resolves to the
+                // block opened by `IfChange('label-name')` in the
+                // target file. The block's line range is the change
+                // requirement.
+                Target::FileLabel { path, label } => {
+                    let key = (path.trim_start_matches('/').to_string(), label.clone());
+                    by_label
+                        .get(&key)
+                        .is_some_and(|&(start, end)| diff.intersects(path, start, end))
+                }
             };
             if !hit {
                 let msg = format!(
@@ -219,6 +241,7 @@ fn format_target(t: &Target) -> String {
         Target::FileLine { path, line } => format!("{path}:{line}"),
         Target::FileLineRange { path, start, end } => format!("{path}:{start}-{end}"),
         Target::FileAnchor { path, anchor } => format!("{path}#{anchor}"),
+        Target::FileLabel { path, label } => format!("{path}:{label}"),
     }
 }
 
@@ -395,6 +418,87 @@ mod tests {
         assert_eq!(r.violations.len(), 1);
         assert_eq!(r.violations[0].kind, "missing-target");
         assert!(r.violations[0].message.contains("docs/security.md#hashing"));
+    }
+
+    #[test]
+    fn test_label_target_resolves_to_named_block_in_target_file() {
+        // Block A in src/a.rs targets `/docs/x.md:section-name`.
+        // Block B in docs/x.md has IfChange('section-name').
+        let block_a = IfChangeBlock {
+            file: "src/a.rs".into(),
+            line_start: 1,
+            line_end: 3,
+            id: None,
+            targets: vec![Target::FileLabel {
+                path: "/docs/x.md".into(),
+                label: "section-name".into(),
+            }],
+            no_verify_reason: None,
+        };
+        let block_b = IfChangeBlock {
+            file: "docs/x.md".into(),
+            line_start: 50,
+            line_end: 60,
+            id: Some("section-name".into()),
+            targets: vec![],
+            no_verify_reason: None,
+        };
+        // Diff: block_a changes; docs/x.md line 55 also changes
+        // (inside block_b's range 50..60).
+        let cl = ChangedLines::from_pairs(&[("src/a.rs", &[(2, 2)]), ("docs/x.md", &[(55, 55)])]);
+        let r = verify_changes(&[block_a, block_b], &[], &cl);
+        assert!(r.passed(), "{r:#?}");
+    }
+
+    #[test]
+    fn test_label_target_unsatisfied_when_diff_outside_named_block_range() {
+        let block_a = IfChangeBlock {
+            file: "src/a.rs".into(),
+            line_start: 1,
+            line_end: 3,
+            id: None,
+            targets: vec![Target::FileLabel {
+                path: "/docs/x.md".into(),
+                label: "section".into(),
+            }],
+            no_verify_reason: None,
+        };
+        let block_b = IfChangeBlock {
+            file: "docs/x.md".into(),
+            line_start: 50,
+            line_end: 60,
+            id: Some("section".into()),
+            targets: vec![],
+            no_verify_reason: None,
+        };
+        // Diff touches block_a + a *different* line in docs/x.md
+        // (line 5 — outside block_b's [50, 60] range).
+        let cl = ChangedLines::from_pairs(&[("src/a.rs", &[(2, 2)]), ("docs/x.md", &[(5, 5)])]);
+        let r = verify_changes(&[block_a, block_b], &[], &cl);
+        assert_eq!(r.violations.len(), 1);
+        assert_eq!(r.violations[0].kind, "missing-target");
+        assert!(r.violations[0].message.contains("/docs/x.md:section"));
+    }
+
+    #[test]
+    fn test_label_target_unknown_label_treated_as_missing() {
+        // Target references a label that no block declares — the
+        // lookup returns None and the target is missing.
+        let block_a = IfChangeBlock {
+            file: "src/a.rs".into(),
+            line_start: 1,
+            line_end: 3,
+            id: None,
+            targets: vec![Target::FileLabel {
+                path: "/docs/x.md".into(),
+                label: "nonexistent".into(),
+            }],
+            no_verify_reason: None,
+        };
+        let cl = ChangedLines::from_pairs(&[("src/a.rs", &[(2, 2)])]);
+        let r = verify_changes(&[block_a], &[], &cl);
+        assert_eq!(r.violations.len(), 1);
+        assert_eq!(r.violations[0].kind, "missing-target");
     }
 
     #[test]

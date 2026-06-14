@@ -70,6 +70,13 @@ pub enum Target {
     /// satisfied. A richer "heading section range" interpretation
     /// (DESIGN §10.2) lands in v0.3.
     FileAnchor { path: String, anchor: String },
+    /// Named-region label: `path:label-name`. Resolves to the block
+    /// opened by `IfChange('label-name')` in the target file (DESIGN
+    /// §10.2). The block's `[line_start, line_end]` range is treated
+    /// as the changed-region requirement. The label form is used
+    /// when the `:` is followed by a non-numeric token; line/range
+    /// forms still win when the suffix is digits or `N-M`.
+    FileLabel { path: String, label: String },
 }
 
 impl Target {
@@ -80,7 +87,8 @@ impl Target {
             Self::File { path }
             | Self::FileLine { path, .. }
             | Self::FileLineRange { path, .. }
-            | Self::FileAnchor { path, .. } => path,
+            | Self::FileAnchor { path, .. }
+            | Self::FileLabel { path, .. } => path,
         }
     }
 }
@@ -157,7 +165,11 @@ pub fn extract_blocks(content: &str, file: &str) -> MarkerParseReport {
             }
             let id = cap.name("id").map(|m| {
                 let raw = m.as_str().trim();
-                raw.to_string()
+                // Strip surrounding matching single or double quotes
+                // so `IfChange('hash-params')` and `IfChange(hash-params)`
+                // produce the same id — the README's canonical
+                // example uses the quoted form.
+                strip_matching_quotes(raw).to_string()
             });
             // Take the higher-priority NoVerify: same-line wins;
             // otherwise the line-above reason.
@@ -231,6 +243,23 @@ fn split_targets(s: &str) -> Vec<String> {
     s.split(',').map(|part| part.trim().to_string()).collect()
 }
 
+/// Strip matching surrounding `'...'` or `"..."` quotes if present.
+/// Returns the original slice unchanged when the quotes don't match
+/// or aren't present.
+fn strip_matching_quotes(s: &str) -> &str {
+    let bytes = s.as_bytes();
+    if bytes.len() < 2 {
+        return s;
+    }
+    let first = bytes[0];
+    let last = bytes[bytes.len() - 1];
+    if (first == b'\'' && last == b'\'') || (first == b'"' && last == b'"') {
+        // Safe: ASCII quote characters are 1 byte each.
+        return &s[1..s.len() - 1];
+    }
+    s
+}
+
 /// Parse a single target token. Supports:
 ///
 /// - `path`
@@ -262,25 +291,41 @@ fn parse_target(raw: &str) -> Result<Target, ()> {
         if path.is_empty() {
             return Err(());
         }
+        // Disambiguator (DESIGN §10.2): a `:` followed by digits or
+        // `N-M` is a line/range; anything else is a label-name.
         if let Some((a, b)) = rest.split_once('-') {
-            let a: u32 = a.parse().map_err(|_| ())?;
-            let b: u32 = b.parse().map_err(|_| ())?;
-            if a == 0 || b == 0 || a > b {
+            if let (Ok(a), Ok(b)) = (a.parse::<u32>(), b.parse::<u32>()) {
+                if a == 0 || b == 0 || a > b {
+                    return Err(());
+                }
+                return Ok(Target::FileLineRange {
+                    path: path.to_string(),
+                    start: a,
+                    end: b,
+                });
+            }
+            // Suffix has a hyphen but isn't a numeric range — fall
+            // through to label-name handling below (slug-style labels
+            // commonly contain hyphens, e.g. `argon2-params`).
+        }
+        if let Ok(n) = rest.parse::<u32>() {
+            if n == 0 {
                 return Err(());
             }
-            return Ok(Target::FileLineRange {
+            return Ok(Target::FileLine {
                 path: path.to_string(),
-                start: a,
-                end: b,
+                line: n,
             });
         }
-        let n: u32 = rest.parse().map_err(|_| ())?;
-        if n == 0 {
+        // Not digits and not a numeric range → label-name.
+        // Validate: labels are non-empty and don't contain `:` (would
+        // re-trigger ambiguity) or whitespace.
+        if rest.contains(':') || rest.chars().any(char::is_whitespace) {
             return Err(());
         }
-        return Ok(Target::FileLine {
+        return Ok(Target::FileLabel {
             path: path.to_string(),
-            line: n,
+            label: rest.to_string(),
         });
     }
     // Bare path. Reject empty.
@@ -384,18 +429,23 @@ fn bb() {}
 
     #[test]
     fn test_malformed_target_reported_other_targets_kept() {
+        // `:zz` is a valid *label-name* under v0.2's
+        // labels-after-non-numeric-colon rule, so use a label that
+        // collides with a line/range numeric (`/bad.md:0`) — line 0
+        // is rejected as out-of-range.
         let src = "\
 // IfChange
 fn x() {}
-// ThenChange(/ok.md, /bad.md:zz, /also-ok.md:5)
+// ThenChange(/ok.md, /bad.md:0, /also-ok.md:5)
 ";
         let report = extract_blocks(src, "a.rs");
         assert_eq!(report.blocks.len(), 1);
         assert_eq!(report.blocks[0].targets.len(), 2);
         assert_eq!(report.errors.len(), 1);
-        assert!(
-            matches!(report.errors[0], MarkerParseError::MalformedTarget { ref token, .. } if token == "/bad.md:zz")
-        );
+        assert!(matches!(
+            report.errors[0],
+            MarkerParseError::MalformedTarget { ref token, .. } if token == "/bad.md:0"
+        ));
     }
 
     #[test]
@@ -573,6 +623,133 @@ x
         assert_eq!(ts.len(), 3);
         assert!(matches!(ts[0], Target::FileAnchor { .. }));
         assert!(matches!(ts[1], Target::FileLineRange { .. }));
+        assert!(matches!(ts[2], Target::File { .. }));
+    }
+
+    #[test]
+    fn test_parse_label_target_alphanumeric_suffix() {
+        let src = "\
+// IfChange
+x
+// ThenChange(/docs/security.md:argon2-params)
+";
+        let report = extract_blocks(src, "a.rs");
+        assert!(report.errors.is_empty(), "{:#?}", report.errors);
+        assert_eq!(report.blocks[0].targets.len(), 1);
+        assert!(matches!(
+            report.blocks[0].targets[0],
+            Target::FileLabel { ref path, ref label }
+                if path == "/docs/security.md" && label == "argon2-params"
+        ));
+    }
+
+    #[test]
+    fn test_parse_label_target_disambiguator_digits_win() {
+        // `:42` is a line number, not a label called "42".
+        let src = "\
+// IfChange
+x
+// ThenChange(/a.rs:42)
+";
+        let report = extract_blocks(src, "a.rs");
+        assert!(report.errors.is_empty(), "{:#?}", report.errors);
+        assert!(matches!(
+            report.blocks[0].targets[0],
+            Target::FileLine { .. }
+        ));
+    }
+
+    #[test]
+    fn test_parse_label_target_with_hyphens_treated_as_label_not_range() {
+        // `:foo-bar` is a label called "foo-bar" — not a range,
+        // because "foo" and "bar" don't parse as u32.
+        let src = "\
+// IfChange
+x
+// ThenChange(/a.rs:foo-bar)
+";
+        let report = extract_blocks(src, "a.rs");
+        assert!(report.errors.is_empty(), "{:#?}", report.errors);
+        assert!(matches!(
+            report.blocks[0].targets[0],
+            Target::FileLabel { ref label, .. } if label == "foo-bar"
+        ));
+    }
+
+    #[test]
+    fn test_parse_label_target_with_double_colon_rejected() {
+        let src = "\
+// IfChange
+x
+// ThenChange(/a.rs:foo:bar)
+";
+        let report = extract_blocks(src, "a.rs");
+        assert!(report.blocks[0].targets.is_empty());
+        assert_eq!(report.errors.len(), 1);
+    }
+
+    #[test]
+    fn test_if_change_strips_matching_single_quotes_around_id() {
+        // README's canonical form uses `IfChange('hash-params')`.
+        // Should produce id = "hash-params", not "'hash-params'".
+        let src = "\
+// IfChange('hash-params')
+x
+// ThenChange
+";
+        let report = extract_blocks(src, "a.rs");
+        assert!(report.errors.is_empty(), "{:#?}", report.errors);
+        assert_eq!(report.blocks[0].id.as_deref(), Some("hash-params"));
+    }
+
+    #[test]
+    fn test_if_change_strips_matching_double_quotes_around_id() {
+        let src = "\
+// IfChange(\"my-id\")
+x
+// ThenChange
+";
+        let report = extract_blocks(src, "a.rs");
+        assert!(report.errors.is_empty(), "{:#?}", report.errors);
+        assert_eq!(report.blocks[0].id.as_deref(), Some("my-id"));
+    }
+
+    #[test]
+    fn test_if_change_preserves_bare_id_without_quotes() {
+        let src = "\
+// IfChange(my-id)
+x
+// ThenChange
+";
+        let report = extract_blocks(src, "a.rs");
+        assert_eq!(report.blocks[0].id.as_deref(), Some("my-id"));
+    }
+
+    #[test]
+    fn test_if_change_preserves_unmatched_quote() {
+        // A leading-only quote isn't matched; preserved as-is.
+        let src = "\
+// IfChange('mismatched)
+x
+// ThenChange
+";
+        let report = extract_blocks(src, "a.rs");
+        assert_eq!(report.blocks[0].id.as_deref(), Some("'mismatched"));
+    }
+
+    #[test]
+    fn test_parse_label_and_line_targets_coexist_in_same_marker() {
+        let src = "\
+// IfChange
+x
+// ThenChange(/a.md:my-section, /b.rs:42, /c.md)
+";
+        let report = extract_blocks(src, "a.rs");
+        assert!(report.errors.is_empty(), "{:#?}", report.errors);
+        let ts = &report.blocks[0].targets;
+        assert_eq!(ts.len(), 3);
+        assert!(matches!(ts[0], Target::FileLabel { .. }));
+        assert!(matches!(ts[1], Target::FileLine { .. }));
         assert!(matches!(ts[2], Target::File { .. }));
     }
 }
