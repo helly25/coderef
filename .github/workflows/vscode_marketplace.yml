@@ -1,6 +1,12 @@
-name: Marketplace Publish
+name: VSCode Marketplace Publish
 
-# Publishes the VSCode extension (helly25.coderef) to the marketplace.
+# Publishes the VSCode extension (helly25.coderef) to the **Visual
+# Studio Code Marketplace** (https://marketplace.visualstudio.com) —
+# the registry served by `code --install-extension` and the
+# Extensions sidebar in VSCode. Distinct from any future channel for
+# Open VSX, JetBrains, etc.; if those are added later they get their
+# own workflow file so each one is independently auditable.
+#
 # Independent of release.yml — the VSIX bundles its own WASM via
 # scripts/bundle-wasm.cjs, so this channel doesn't depend on the
 # GitHub Releases CLI binaries being present yet.
