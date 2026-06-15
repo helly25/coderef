@@ -44,6 +44,12 @@
           "type": "string",
           "default": "",
           "description": "Optional explicit path to the .coderef.jsonc, relative to the workspace root. Empty = auto-detect."
+        },
+        "coderef.references.maxNodesPerLevel": {
+          "type": "number",
+          "default": 1000,
+          "minimum": 10,
+          "description": "Cap on the number of nodes shown at any level of the references browser tree (per-category file list, per-file leaf list). Levels exceeding the cap are truncated with a placeholder; the doctor's references.tooManyNodes diagnostic surfaces the same condition. Lower values keep the tree responsive on huge repos."
         }
       }
     },

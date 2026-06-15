@@ -249,3 +249,44 @@ test("renderReferencesAsMarkdown sorts refs within a file by byte_start", () => 
   assert.ok(idx5 !== -1 && idx10 !== -1 && idx20 !== -1);
   assert.ok(idx5 < idx10 && idx10 < idx20, `expected 5→10→20 order; got md =\n${md}`);
 });
+
+// ---------------------------------------------------------------------
+// maxNodesPerLevel cap. Pure `capLevel` helper — render function +
+// max -> bounded Node[] with a truncation placeholder when needed.
+// ---------------------------------------------------------------------
+
+test("capLevel returns all items when count <= cap", () => {
+  const items = [1, 2, 3];
+  const rendered = referencesView.capLevel(items, (n) => ({ label: `n${n}` } as never), 10);
+  assert.equal(rendered.length, 3);
+  assert.deepEqual(
+    rendered.map((n) => (n as { label: string }).label),
+    ["n1", "n2", "n3"],
+  );
+});
+
+test("capLevel truncates to cap and appends a placeholder", () => {
+  const items = [1, 2, 3, 4, 5];
+  const rendered = referencesView.capLevel(items, (n) => ({ label: `n${n}` } as never), 3);
+  assert.equal(rendered.length, 4); // 3 + 1 placeholder
+  // First three are the rendered entries.
+  assert.deepEqual(
+    rendered.slice(0, 3).map((n) => (n as { label: string }).label),
+    ["n1", "n2", "n3"],
+  );
+  // Last is a TruncatedNode — match its labelled summary.
+  const last = rendered[rendered.length - 1] as { label: string };
+  assert.match(last.label, /…and 2 more/);
+  assert.match(last.label, /cap: 3/);
+});
+
+test("capLevel with cap=0 produces only the placeholder for non-empty input", () => {
+  // Edge — the actual setting clamps low values to a sane minimum,
+  // but capLevel itself respects whatever cap it's handed so it's
+  // composable.
+  const items = [1, 2];
+  const rendered = referencesView.capLevel(items, (n) => ({ label: `n${n}` } as never), 0);
+  assert.equal(rendered.length, 1);
+  const placeholder = rendered[0] as { label: string };
+  assert.match(placeholder.label, /…and 2 more/);
+});
