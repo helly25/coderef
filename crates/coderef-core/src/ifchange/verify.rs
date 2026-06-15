@@ -10,11 +10,17 @@ use serde::{Deserialize, Serialize};
 
 use super::diff::ChangedLines;
 use super::parse::{IfChangeBlock, MarkerParseError, Target};
+use crate::severity::Severity;
 
 /// One violation surfaced by the coupled-change verifier.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Violation {
     pub kind: ViolationKind,
+    /// Severity of the violation. `Error` for hard mismatches
+    /// (default); `Warning` for soft glob targets that ship the
+    /// `{soft}` modifier (DESIGN §10.2). Soft warnings surface in
+    /// reports but do not flip the exit code.
+    pub severity: Severity,
     /// File where the violation was *detected* — i.e. the changed
     /// block whose peer/target wasn't.
     pub file: String,
@@ -55,11 +61,13 @@ pub struct ChangesReport {
 }
 
 impl ChangesReport {
-    /// `true` iff no violations and no parse errors. What
-    /// `coderef changes` exits zero on.
+    /// `true` iff no failing violations and no parse errors. What
+    /// `coderef changes` exits zero on. Soft (warning-severity)
+    /// violations are surfaced in the report but don't flip the
+    /// exit code — they're advisory.
     #[must_use]
     pub fn passed(&self) -> bool {
-        self.violations.is_empty() && self.parse_errors.is_empty()
+        !self.violations.iter().any(|v| v.severity.is_failure()) && self.parse_errors.is_empty()
     }
 }
 
@@ -67,6 +75,10 @@ impl ChangesReport {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ViolationReport {
     pub kind: String,
+    /// `"error"` (default) or `"warning"` for soft glob mismatches.
+    /// Earlier JSON consumers that ignore unknown fields keep working —
+    /// `severity` is additive.
+    pub severity: Severity,
     pub file: String,
     pub line: u32,
     pub message: String,
@@ -192,24 +204,24 @@ where
                         .get(&key)
                         .is_some_and(|&(start, end)| diff.intersects(path, start, end))
                 }
-                // Glob target: `/path/*.md{any|all}`. Match the
+                // Glob target: `/path/*.md{any|all|soft}`. Match the
                 // pattern against the diff's changed-file list.
-                Target::FileGlob { pattern, flag } => {
+                Target::FileGlob { pattern, flags } => {
                     let stripped = pattern.trim_start_matches('/');
                     let glob_result = globset::Glob::new(stripped);
                     if let Ok(glob) = glob_result {
                         let matcher = glob.compile_matcher();
                         let touched = diff.files();
                         let matched_count = touched.iter().filter(|f| matcher.is_match(f)).count();
-                        match flag {
+                        match flags.mode {
                             // `any`: at least one matched-and-changed.
                             // `all` v0.2 semantics: same as `any` — the
                             // strict "every workspace file matching
                             // the glob must change" form needs a full
                             // workspace enumeration that the verifier
                             // doesn't have at this layer. Tracked as
-                            // a v0.3 follow-up in DESIGN §10.2.
-                            super::parse::GlobFlag::Any | super::parse::GlobFlag::All => {
+                            // a follow-up in DESIGN §10.2.
+                            super::parse::GlobMode::Any | super::parse::GlobMode::All => {
                                 matched_count > 0
                             }
                         }
@@ -223,6 +235,16 @@ where
                 }
             };
             if !hit {
+                // Severity drops to Warning iff the target carries
+                // the `{soft}` flag (only meaningful on globs today;
+                // other target kinds always emit Error).
+                let severity = match target {
+                    Target::FileGlob {
+                        flags: super::parse::GlobFlags { soft: true, .. },
+                        ..
+                    } => Severity::Warning,
+                    _ => Severity::Error,
+                };
                 let msg = format!(
                     "block at `{f}:{l}` requires `{tgt}` to also change, but the diff doesn't \
                      touch it",
@@ -232,6 +254,7 @@ where
                 );
                 this_block_violations.push(Violation {
                     kind: ViolationKind::MissingTarget,
+                    severity,
                     file: b.file.clone(),
                     line: b.line_start,
                     message: msg,
@@ -259,6 +282,7 @@ where
                         );
                         this_block_violations.push(Violation {
                             kind: ViolationKind::MissingPeer,
+                            severity: Severity::Error,
                             file: b.file.clone(),
                             line: b.line_start,
                             message: msg,
@@ -290,6 +314,7 @@ where
                 ViolationKind::MissingTarget => "missing-target".to_string(),
                 ViolationKind::MissingPeer => "missing-peer".to_string(),
             },
+            severity: v.severity,
             file: v.file,
             line: v.line,
             message: v.message,
@@ -313,12 +338,23 @@ fn format_target(t: &Target) -> String {
         Target::FileLineRange { path, start, end } => format!("{path}:{start}-{end}"),
         Target::FileAnchor { path, anchor } => format!("{path}#{anchor}"),
         Target::FileLabel { path, label } => format!("{path}:{label}"),
-        Target::FileGlob { pattern, flag } => {
-            let flag_str = match flag {
-                super::parse::GlobFlag::Any => "any",
-                super::parse::GlobFlag::All => "all",
-            };
-            format!("{pattern}{{{flag_str}}}")
+        Target::FileGlob { pattern, flags } => {
+            // Build the brace-suffix as the user wrote it: emit only
+            // the non-default tokens. Default is `{any}` with no soft
+            // — those produce a bare `pattern` for cleanliness.
+            let mut tokens: Vec<&'static str> = Vec::new();
+            match flags.mode {
+                super::parse::GlobMode::Any => {}
+                super::parse::GlobMode::All => tokens.push("all"),
+            }
+            if flags.soft {
+                tokens.push("soft");
+            }
+            if tokens.is_empty() {
+                pattern.clone()
+            } else {
+                format!("{pattern}{{{}}}", tokens.join(","))
+            }
         }
     }
 }
@@ -652,7 +688,7 @@ mod tests {
             id: None,
             targets: vec![Target::FileGlob {
                 pattern: "/docs/*.md".into(),
-                flag: super::super::parse::GlobFlag::Any,
+                flags: super::super::parse::GlobFlags::default(),
             }],
             no_verify_reason: None,
         };
@@ -671,7 +707,7 @@ mod tests {
             id: None,
             targets: vec![Target::FileGlob {
                 pattern: "/docs/*.md".into(),
-                flag: super::super::parse::GlobFlag::Any,
+                flags: super::super::parse::GlobFlags::default(),
             }],
             no_verify_reason: None,
         };
@@ -680,7 +716,9 @@ mod tests {
         let r = verify_changes(&[b], &[], &cl);
         assert_eq!(r.violations.len(), 1);
         assert_eq!(r.violations[0].kind, "missing-target");
-        assert!(r.violations[0].message.contains("/docs/*.md{any}"));
+        // `format_target` omits the redundant `{any}` suffix on the
+        // default flag set; the bare pattern is enough.
+        assert!(r.violations[0].message.contains("/docs/*.md"));
     }
 
     #[test]
@@ -692,7 +730,7 @@ mod tests {
             id: None,
             targets: vec![Target::FileGlob {
                 pattern: "/docs/**/*.md".into(),
-                flag: super::super::parse::GlobFlag::Any,
+                flags: super::super::parse::GlobFlags::default(),
             }],
             no_verify_reason: None,
         };
@@ -757,5 +795,86 @@ mod tests {
         assert!(!r.passed());
         assert_eq!(r.parse_errors.len(), 1);
         assert_eq!(r.parse_errors[0].kind, "orphan-ifchange");
+    }
+
+    // ---------------------------------------------------------------
+    // `{soft}` glob flag — DESIGN §10.2 severity modifier. A soft
+    // glob target that misses still surfaces a violation, but with
+    // Severity::Warning so `passed()` returns true (advisory, not
+    // failing).
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn test_soft_glob_target_miss_is_warning_not_error() {
+        let b = IfChangeBlock {
+            file: "src/a.rs".into(),
+            line_start: 1,
+            line_end: 3,
+            id: None,
+            targets: vec![Target::FileGlob {
+                pattern: "/docs/*.md".into(),
+                flags: super::super::parse::GlobFlags {
+                    mode: super::super::parse::GlobMode::Any,
+                    soft: true,
+                },
+            }],
+            no_verify_reason: None,
+        };
+        // a.rs changed, but no /docs/*.md file changed → glob misses.
+        let cl = ChangedLines::from_pairs(&[("src/a.rs", &[(2, 2)])]);
+        let r = verify_changes(&[b], &[], &cl);
+        assert_eq!(r.violations.len(), 1);
+        assert_eq!(r.violations[0].kind, "missing-target");
+        assert_eq!(r.violations[0].severity, Severity::Warning);
+        // Soft warnings don't fail the run.
+        assert!(r.passed(), "soft glob miss must not fail passed()");
+    }
+
+    #[test]
+    fn test_non_soft_glob_target_miss_is_error() {
+        let b = IfChangeBlock {
+            file: "src/a.rs".into(),
+            line_start: 1,
+            line_end: 3,
+            id: None,
+            targets: vec![Target::FileGlob {
+                pattern: "/docs/*.md".into(),
+                flags: super::super::parse::GlobFlags::default(), // any, not soft
+            }],
+            no_verify_reason: None,
+        };
+        let cl = ChangedLines::from_pairs(&[("src/a.rs", &[(2, 2)])]);
+        let r = verify_changes(&[b], &[], &cl);
+        assert_eq!(r.violations.len(), 1);
+        assert_eq!(r.violations[0].severity, Severity::Error);
+        assert!(!r.passed(), "non-soft glob miss must fail passed()");
+    }
+
+    #[test]
+    fn test_peer_mismatch_severity_is_always_error() {
+        // Shape B peer-mismatch violations are not modifiable by
+        // glob flags (peers aren't globs). Confirm Severity::Error.
+        let b1 = IfChangeBlock {
+            file: "a.rs".into(),
+            line_start: 1,
+            line_end: 3,
+            id: Some("k".into()),
+            targets: vec![],
+            no_verify_reason: None,
+        };
+        let b2 = IfChangeBlock {
+            file: "b.rs".into(),
+            line_start: 5,
+            line_end: 7,
+            id: Some("k".into()),
+            targets: vec![],
+            no_verify_reason: None,
+        };
+        // a.rs changes; b.rs doesn't.
+        let cl = ChangedLines::from_pairs(&[("a.rs", &[(2, 2)])]);
+        let r = verify_changes(&[b1, b2], &[], &cl);
+        assert_eq!(r.violations.len(), 1);
+        assert_eq!(r.violations[0].kind, "missing-peer");
+        assert_eq!(r.violations[0].severity, Severity::Error);
     }
 }

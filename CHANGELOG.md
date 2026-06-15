@@ -9,6 +9,37 @@ versions follow [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`{soft}` glob flag** on `ThenChange` glob targets (DESIGN §10.2
+  severity modifier). A `ThenChange(/docs/*.md{soft})` target whose
+  matched-and-changed count is zero still surfaces a violation, but
+  with `Severity::Warning` — `ChangesReport::passed()` ignores
+  warnings, so `coderef changes` exits 0. The flag is comma-combinable
+  with the existing `{any}` / `{all}` mode flags: `{soft,all}` (and
+  `{all,soft}`) mean "every matched file should change, but if not,
+  warn rather than fail". The previous single-flag-only parser is
+  generalised to a comma-separated flag set inside the braces.
+- `GlobFlag` enum split into `GlobMode { Any, All }` (mutually
+  exclusive match-mode) and `GlobFlags { mode, soft }` (struct that
+  groups the mode with the orthogonal `soft` severity bit). All
+  `Target::FileGlob` sites now carry `flags: GlobFlags` instead of
+  `flag: GlobFlag`. `format_target` omits the brace suffix entirely
+  when the flags are at their default (any-mode, not soft) so
+  violation messages don't sprout a redundant `{any}` on every
+  default glob.
+- `Violation` and `ViolationReport` carry a `severity: Severity`
+  field. JSON consumers that ignore unknown fields keep working
+  (additive change); consumers that depend on `severity` get
+  `"warning"` for soft glob misses and `"error"` for everything
+  else.
+- CLI `coderef changes --report text` prefixes warning violations
+  with `[warn/missing-target]` instead of the plain
+  `[missing-target]`; the trailing summary line splits `violation(s)`
+  into `error(s)` and `warning(s)` so the reader can see at a glance
+  whether the run failed because of a hard mismatch or only flagged
+  soft ones.
+- `split_targets` (the comma-splitter for the `ThenChange(...)` arg
+  list) now respects `{...}` brace boundaries — commas inside a
+  flag set don't split into separate targets.
 - **`Label('name') ... EndLabel` marker recognition** in the IfChange
   block parser (DESIGN §10.2 / §10.3 compat form). The compat markers
   are now parsed as alternative open/close pairs alongside the
