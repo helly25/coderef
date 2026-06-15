@@ -9,6 +9,20 @@ versions follow [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Strict `{all}` glob semantics** in `ThenChange` (DESIGN §10.2).
+  `IfChange ... ThenChange(/docs/*.md{all})` now enforces that *every*
+  workspace file matching the glob is touched by the diff, not just
+  "at least one" as the v0.2-shipped lax semantics required. Powered
+  by a new `enumerate_workspace_files` helper in `coderef-core` plus
+  a new `workspace_files: Option<&[String]>` parameter on
+  `verify_changes_composable`. The CLI's `coderef changes` walks
+  the workspace with the same `.gitignore` + config `ignore[]`
+  semantics that block-scanning uses, so the file universe stays
+  consistent. Callers without a workspace handy (WASM in-editor
+  path, isolated unit tests) pass `None` and `{all}` falls back to
+  the lax v0.2 any-mode behaviour. Empty match set is a vacuous
+  pass — a stale-glob doctor check is the right surface for that,
+  not a coupled-change violation.
 - **`{soft}` glob flag** on `ThenChange` glob targets (DESIGN §10.2
   severity modifier). A `ThenChange(/docs/*.md{soft})` target whose
   matched-and-changed count is zero still surfaces a violation, but
