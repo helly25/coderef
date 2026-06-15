@@ -127,6 +127,23 @@ pub fn run_doctor_with_workspace(
     root: impl AsRef<std::path::Path>,
     config: &Config,
 ) -> Result<DoctorReport, DoctorError> {
+    run_doctor_with_workspace_and_commit_corpus(root, config, None)
+}
+
+/// Like [`run_doctor_with_workspace`] but also takes a commit-log corpus.
+///
+/// Adds the `commitMessage.requiredNeverFires` check (DESIGN §16.1.1).
+/// Callers (typically the CLI's `coderef doctor`) walk
+/// `git log -n N --format=%B` and pass the resulting message bodies.
+/// When `commit_messages` is `None` or empty, the requiredNeverFires
+/// check is silently skipped — having no corpus is not itself an
+/// authoring error.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn run_doctor_with_workspace_and_commit_corpus(
+    root: impl AsRef<std::path::Path>,
+    config: &Config,
+    commit_messages: Option<&[String]>,
+) -> Result<DoctorReport, DoctorError> {
     let mut report = run_doctor(config);
 
     // Build a config containing only patterns whose regex compiles,
@@ -161,6 +178,15 @@ pub fn run_doctor_with_workspace(
     self::checks::check_category_mismatch(config, &refs, &mut additions);
     self::checks::check_anchor_skipped_ext(config, &refs, &mut additions);
     self::checks::check_anchor_style_mismatch(config, &refs, root.as_ref(), &mut additions);
+
+    // `commitMessage.requiredNeverFires` only runs when the caller
+    // supplied a commit-log corpus; empty / `None` corpus means the
+    // host couldn't gather one (e.g. not a git repo, git not on
+    // PATH) and we shouldn't flag every required pattern as
+    // never-fired in that case.
+    if let Some(msgs) = commit_messages {
+        self::checks::check_commit_message_required_never_fires(config, msgs, &mut additions);
+    }
 
     // IfChange markers live in a separate index from regular
     // references; scan them too so `coupled.composableTypo` and the

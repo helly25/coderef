@@ -9,6 +9,19 @@ versions follow [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`commitMessage.requiredNeverFires` doctor diagnostic** (DESIGN
+  §16.1.1). A pattern declared `scope.commitMessage: "required"`
+  whose regex doesn't match any commit in the host-supplied corpus
+  is flagged at `Warning` severity. `coderef doctor` now walks
+  `git log -n 200 --format=%B` (NUL-separated bodies) and feeds the
+  result to a new
+  `run_doctor_with_workspace_and_commit_corpus(root, cfg, msgs)`
+  entry point in `coderef-core`. The original
+  `run_doctor_with_workspace(root, cfg)` stays as a 2-arg backward-
+  compatible alias that passes `None` for the corpus. With no
+  corpus (host couldn't reach git, not a repo, or the log is
+  genuinely empty), the check is silently skipped rather than
+  flagging every required pattern as never-fired.
 - **`label.*` doctor diagnostics** (DESIGN §10.3). Three new
   scan-dependent checks fire when at least one `kind: "ifchange"`
   pattern is configured: `label.duplicateInFile` (Error — two labelled

@@ -600,6 +600,73 @@ fn levenshtein_near_match(re: &fancy_regex::Regex, text: &str, max: u32) -> bool
     false
 }
 
+/// `commitMessage.requiredNeverFires` — a pattern declared
+/// `scope.commitMessage: "required"` doesn't match any commit in the
+/// recent commit log corpus the host passed in (DESIGN §16.1.1).
+/// Catches stale required-pattern declarations: someone added a
+/// `required` scope but the actual format never landed in commits, so
+/// the requirement isn't being enforced in practice.
+///
+/// Severity `Warning` by default (advisory — the corpus is a finite
+/// sample). `corpus` is typically the body of the last N commits, as
+/// extracted by the host (`git log -n N --format=%B`).
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn check_commit_message_required_never_fires(
+    cfg: &Config,
+    corpus: &[String],
+    out: &mut Vec<Diagnostic>,
+) {
+    use crate::config::{resolve_commit_message_scope, EffectiveCommitMessageScope};
+    if corpus.is_empty() {
+        // No corpus to evaluate against — silently skip rather than
+        // flag every required pattern as never-fired. The CLI logs a
+        // warning when it can't fetch git log.
+        return;
+    }
+    for (pat_id, pattern) in &cfg.patterns {
+        if !matches!(
+            resolve_commit_message_scope(pattern),
+            EffectiveCommitMessageScope::Required
+        ) {
+            continue;
+        }
+        let Ok(re) = fancy_regex::Regex::new(&pattern.regex) else {
+            continue;
+        };
+        let fired = corpus.iter().any(|msg| re.is_match(msg).unwrap_or(false));
+        if fired {
+            continue;
+        }
+        let sev = resolve_severity(
+            cfg,
+            pattern,
+            "commitMessage.requiredNeverFires",
+            Severity::Warning,
+        );
+        if sev == Severity::Off {
+            continue;
+        }
+        out.push(Diagnostic {
+            check: "commitMessage.requiredNeverFires".into(),
+            severity: sev,
+            pattern_id: Some(pat_id.clone()),
+            message: format!(
+                "pattern `{pat_id}` is declared `scope.commitMessage: \"required\"` but \
+                 didn't match any of the last {n} commit messages — the requirement isn't \
+                 being enforced in practice",
+                n = corpus.len(),
+            ),
+            hint: Some(
+                "either drop the `required` declaration if the pattern is genuinely \
+                 optional, or update the regex to match the actual commit-message \
+                 conventions in use; suppress via \
+                 `severity: { \"commitMessage.requiredNeverFires\": \"off\" }`"
+                    .into(),
+            ),
+        });
+    }
+}
+
 /// `label.duplicateInFile` — two labelled regions in the same file
 /// collide on the same id name (DESIGN §10.3). Catches both
 /// `IfChange('name')`-name and `Label('name')`-name forms uniformly
