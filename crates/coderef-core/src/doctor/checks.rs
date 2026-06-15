@@ -600,6 +600,175 @@ fn levenshtein_near_match(re: &fancy_regex::Regex, text: &str, max: u32) -> bool
     false
 }
 
+/// `label.duplicateInFile` — two labelled regions in the same file
+/// collide on the same id name (DESIGN §10.3). Catches both
+/// `IfChange('name')`-name and `Label('name')`-name forms uniformly
+/// since both produce the same internal `IfChangeBlock` shape. A
+/// collision is non-deterministic on Shape B `ThenChange(path:name)`
+/// lookups — the second block silently wins — so this is `Error`
+/// by default.
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn check_label_duplicate_in_file(
+    cfg: &Config,
+    blocks: &[crate::ifchange::IfChangeBlock],
+    out: &mut Vec<Diagnostic>,
+) {
+    use std::collections::HashMap;
+    let mut seen: HashMap<(&str, &str), u32> = HashMap::new();
+    for b in blocks {
+        let Some(ref id) = b.id else { continue };
+        if id.is_empty() {
+            continue;
+        }
+        let key = (b.file.as_str(), id.as_str());
+        if let Some(&first_line) = seen.get(&key) {
+            let sev = cfg
+                .severity
+                .get("label.duplicateInFile")
+                .copied()
+                .unwrap_or(Severity::Error);
+            if sev == Severity::Off {
+                continue;
+            }
+            out.push(Diagnostic {
+                check: "label.duplicateInFile".into(),
+                severity: sev,
+                pattern_id: None,
+                message: format!(
+                    "two labelled regions in `{f}` share id `{id}` — first at line \
+                     {first_line}, again at line {l}",
+                    f = b.file,
+                    l = b.line_start,
+                ),
+                hint: Some(
+                    "give each labelled region a unique name within the file; \
+                     `ThenChange(path:label-name)` targets resolve by name and ambiguous \
+                     collisions silently pick one of the matches"
+                        .into(),
+                ),
+            });
+        } else {
+            seen.insert(key, b.line_start);
+        }
+    }
+}
+
+/// `label.unused` — a labelled region that no `ThenChange` target
+/// ever references via `path:label-name`, and that has no Shape B
+/// peer block sharing the same id (DESIGN §10.3). Advisory only —
+/// defaults to `Info` so shared / template configs aren't loud
+/// about labels declared on the off-chance they're referenced.
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn check_label_unused(
+    cfg: &Config,
+    blocks: &[crate::ifchange::IfChangeBlock],
+    out: &mut Vec<Diagnostic>,
+) {
+    use std::collections::HashSet;
+    let mut referenced: HashSet<(String, String)> = HashSet::new();
+    for b in blocks {
+        for t in &b.targets {
+            if let crate::ifchange::Target::FileLabel { path, label } = t {
+                referenced.insert((path.trim_start_matches('/').to_string(), label.clone()));
+            }
+        }
+    }
+    for b in blocks {
+        let Some(ref id) = b.id else { continue };
+        if id.is_empty() {
+            continue;
+        }
+        let key = (b.file.trim_start_matches('/').to_string(), id.clone());
+        if referenced.contains(&key) {
+            continue;
+        }
+        // Tolerate id-only peer matching: a block sharing an id with
+        // another block (Shape B / C cross-file group) isn't "unused"
+        // even without a path-prefixed FileLabel reference.
+        let has_peer = blocks
+            .iter()
+            .any(|other| !std::ptr::eq(other, b) && other.id.as_deref() == Some(id.as_str()));
+        if has_peer {
+            continue;
+        }
+        let sev = cfg
+            .severity
+            .get("label.unused")
+            .copied()
+            .unwrap_or(Severity::Info);
+        if sev == Severity::Off {
+            continue;
+        }
+        out.push(Diagnostic {
+            check: "label.unused".into(),
+            severity: sev,
+            pattern_id: None,
+            message: format!(
+                "labelled region `{f}:{id}` (line {l}) has no peer block and no \
+                 `ThenChange(path:{id})` reference",
+                f = b.file,
+                l = b.line_start,
+            ),
+            hint: Some(
+                "remove the label if it's stale, or add a `ThenChange(path:label-name)` \
+                 target elsewhere; suppress via `severity: { \"label.unused\": \"off\" }`"
+                    .into(),
+            ),
+        });
+    }
+}
+
+/// `label.ambiguousName` — a label name is purely numeric (e.g.
+/// `IfChange('42')`) or matches `N-M` (e.g. `IfChange('5-10')`).
+/// Both forms collide with the line/range disambiguator inside
+/// `ThenChange(path:N)` / `:N-M` targets, which uses the leading
+/// character class to choose between label vs line vs range
+/// resolution — so numeric-looking labels are effectively
+/// unaddressable from other files (DESIGN §10.3).
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn check_label_ambiguous_name(
+    cfg: &Config,
+    blocks: &[crate::ifchange::IfChangeBlock],
+    out: &mut Vec<Diagnostic>,
+) {
+    static NUMERIC_RE: std::sync::LazyLock<fancy_regex::Regex> = std::sync::LazyLock::new(|| {
+        fancy_regex::Regex::new(r"^\d+(-\d+)?$").expect("numeric-label regex is valid")
+    });
+    for b in blocks {
+        let Some(ref id) = b.id else { continue };
+        if id.is_empty() {
+            continue;
+        }
+        if !NUMERIC_RE.is_match(id).unwrap_or(false) {
+            continue;
+        }
+        let sev = cfg
+            .severity
+            .get("label.ambiguousName")
+            .copied()
+            .unwrap_or(Severity::Error);
+        if sev == Severity::Off {
+            continue;
+        }
+        out.push(Diagnostic {
+            check: "label.ambiguousName".into(),
+            severity: sev,
+            pattern_id: None,
+            message: format!(
+                "labelled region `{f}:{id}` (line {l}) — name `{id}` matches `N` or `N-M`, \
+                 collides with line/range syntax in `ThenChange(path:line)` targets",
+                f = b.file,
+                l = b.line_start,
+            ),
+            hint: Some(
+                "rename the label to include at least one non-digit character (e.g. \
+                 `block-N`, `qN`)"
+                    .into(),
+            ),
+        });
+    }
+}
+
 /// Run every per-pattern check, appending diagnostics in place.
 #[allow(clippy::too_many_lines)] // every check is small; one fn keeps the order obvious
 pub fn check_pattern(id: &str, p: &Pattern, cfg: &Config, out: &mut Vec<Diagnostic>) {
