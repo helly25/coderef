@@ -23,6 +23,19 @@ static IF_CHANGE_RE: LazyLock<Regex> = LazyLock::new(|| {
 static THEN_CHANGE_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\bThenChange(?:\((?<targets>[^)]*)\))?").expect("ThenChange marker regex is valid")
 });
+/// `Label('name') ... EndLabel` compat form (DESIGN §10.2). The
+/// open marker `Label(id)` is equivalent to `IfChange(id)` and the
+/// close marker `EndLabel` is equivalent to `ThenChange` with empty
+/// targets. Block ids declared this way participate in the same
+/// label-resolution surface as Shape B `IfChange(id)` blocks — a
+/// `ThenChange(path:label-name)` elsewhere can target either form.
+/// `EndLabel` does not accept targets — `EndLabel(...)` is a parse
+/// error if anyone tries it (handled by the regex shape).
+static LABEL_OPEN_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\bLabel(?:\((?<id>[^)]*)\))?").expect("Label marker regex is valid")
+});
+static LABEL_CLOSE_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\bEndLabel\b").expect("EndLabel marker regex is valid"));
 /// `NoVerify(coderef:ifchange)` opt-out (DESIGN §10.6). Reason text
 /// must follow — the verifier records it for audit and an empty
 /// reason is treated as an authoring error elsewhere.
@@ -159,15 +172,28 @@ pub fn extract_blocks(content: &str, file: &str) -> MarkerParseReport {
                 .unwrap_or_default()
         });
 
-        // Match IfChange first. The regex doesn't anchor against
-        // ThenChange — but ThenChange contains "Change" too, and a
-        // bare `\bThen` doesn't match `\bIf`. Still, a line like
-        // `// ThenChange(...)` should NOT trigger IfChange detection;
-        // the regex `\bIfChange\b...` won't match `ThenChange` because
-        // the prefix is different. Confirmed by tests below.
-        if let Ok(Some(cap)) = IF_CHANGE_RE.captures(line) {
-            // Reject lines that *also* contain ThenChange on the same
-            // line (would otherwise produce a degenerate block).
+        // Match an OPEN marker: `IfChange(...)` (canonical) or
+        // `Label(...)` (compat form). The two regexes don't collide —
+        // `\bIfChange` and `\bLabel` are distinct word starts, and
+        // neither matches inside the other (e.g. `EndLabel` has no
+        // word boundary before `Label`). Check IfChange first so the
+        // canonical form wins on the rare line that contains both.
+        let open_match = IF_CHANGE_RE
+            .captures(line)
+            .ok()
+            .flatten()
+            .map(|c| (c, "IfChange"))
+            .or_else(|| {
+                LABEL_OPEN_RE
+                    .captures(line)
+                    .ok()
+                    .flatten()
+                    .map(|c| (c, "Label"))
+            });
+
+        if let Some((cap, keyword)) = open_match {
+            // Reject lines that *also* contain ThenChange/EndLabel on the
+            // same line (would otherwise produce a degenerate block).
             // Per DESIGN, the markers occupy their own lines; we treat
             // a same-line both-markers form as `OrphanIfChange`.
             if open.is_some() {
@@ -187,7 +213,7 @@ pub fn extract_blocks(content: &str, file: &str) -> MarkerParseReport {
             // Fall back to the regex's capture for ids without nested
             // parens.
             let m0 = cap.get(0).expect("group 0 always present");
-            let id = balanced_id_from(line, m0.start())
+            let id = balanced_id_from(line, m0.start(), keyword)
                 .or_else(|| cap.name("id").map(|m| m.as_str().trim().to_string()));
             let id = id.map(|raw| strip_matching_quotes(raw.trim()).to_string());
             // Take the higher-priority NoVerify: same-line wins;
@@ -200,7 +226,23 @@ pub fn extract_blocks(content: &str, file: &str) -> MarkerParseReport {
             continue;
         }
 
-        if let Ok(Some(cap)) = THEN_CHANGE_RE.captures(line) {
+        // Match a CLOSE marker: `ThenChange(targets)` (canonical, may
+        // carry targets) or `EndLabel` (compat form, never carries
+        // targets — `EndLabel(...)` would be malformed, not a target
+        // list). Check ThenChange first so the canonical form wins.
+        let close_targets_text = if let Ok(Some(cap)) = THEN_CHANGE_RE.captures(line) {
+            Some(
+                cap.name("targets")
+                    .map(|m| m.as_str().trim().to_string())
+                    .unwrap_or_default(),
+            )
+        } else if LABEL_CLOSE_RE.is_match(line).unwrap_or(false) {
+            Some(String::new())
+        } else {
+            None
+        };
+
+        if let Some(targets_text) = close_targets_text {
             let Some((open_line, id, nv_reason)) = open.take() else {
                 errors.push(MarkerParseError::OrphanThenChange {
                     file: file.to_string(),
@@ -209,10 +251,6 @@ pub fn extract_blocks(content: &str, file: &str) -> MarkerParseReport {
                 prev_no_verify = this_no_verify;
                 continue;
             };
-            let targets_text = cap
-                .name("targets")
-                .map(|m| m.as_str().trim().to_string())
-                .unwrap_or_default();
             let mut targets = Vec::new();
             for raw in split_targets(&targets_text) {
                 let raw = raw.trim();
@@ -294,9 +332,10 @@ fn strip_glob_flag(raw: &str) -> Result<(&str, Option<GlobFlag>), ()> {
 /// Handles nested parens so `IfChange(JIRA(PROJ-1234))` yields
 /// `JIRA(PROJ-1234)` — what the v0.2 marker regex `[^)]*` truncated
 /// at the first `)`.
-fn balanced_id_from(line: &str, marker_start: usize) -> Option<String> {
-    // Skip past `IfChange` (8 chars; the regex matched it).
-    let after_keyword = marker_start.checked_add("IfChange".len())?;
+fn balanced_id_from(line: &str, marker_start: usize, keyword: &str) -> Option<String> {
+    // Skip past the matched keyword (e.g. `IfChange`, `Label`) — the
+    // regex already matched these chars, so just advance the index.
+    let after_keyword = marker_start.checked_add(keyword.len())?;
     let bytes = line.as_bytes();
     if bytes.get(after_keyword) != Some(&b'(') {
         return None;
@@ -954,5 +993,154 @@ x
         assert_eq!(ts.len(), 2);
         assert!(matches!(ts[0], Target::FileGlob { .. }));
         assert!(matches!(ts[1], Target::FileLabel { .. }));
+    }
+
+    // -----------------------------------------------------------------
+    // Label('name') ... EndLabel compat form (DESIGN §10.2).
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn test_label_endlabel_produces_block_with_id_and_no_targets() {
+        let src = "\
+// Label('my-region')
+x
+// EndLabel
+";
+        let report = extract_blocks(src, "a.rs");
+        assert!(report.errors.is_empty(), "{:#?}", report.errors);
+        assert_eq!(report.blocks.len(), 1);
+        let b = &report.blocks[0];
+        assert_eq!(b.id.as_deref(), Some("my-region"));
+        assert!(b.targets.is_empty());
+    }
+
+    #[test]
+    fn test_label_endlabel_id_quotes_stripped() {
+        // `Label('x')`, `Label("x")`, and `Label(x)` all yield id="x".
+        for src in [
+            "// Label('x')\ny\n// EndLabel\n",
+            "// Label(\"x\")\ny\n// EndLabel\n",
+            "// Label(x)\ny\n// EndLabel\n",
+        ] {
+            let report = extract_blocks(src, "a.rs");
+            assert!(report.errors.is_empty(), "{src:?}: {:#?}", report.errors);
+            assert_eq!(report.blocks[0].id.as_deref(), Some("x"), "src = {src:?}");
+        }
+    }
+
+    #[test]
+    fn test_label_can_target_endlabel_block_via_thenchange() {
+        // a.rs uses Label/EndLabel to declare a labelled region;
+        // b.rs's IfChange/ThenChange targets it via `a.rs:my-block`.
+        // Confirms that the compat form produces a block that's
+        // discoverable from another file's ThenChange target.
+        let label_src = "\
+// Label('my-block')
+let payload = 42;
+// EndLabel
+";
+        let report = extract_blocks(label_src, "a.rs");
+        assert!(report.errors.is_empty(), "{:#?}", report.errors);
+        assert_eq!(report.blocks[0].id.as_deref(), Some("my-block"));
+        // The block's line range frames the labeled region.
+        assert_eq!(report.blocks[0].line_start, 1);
+        assert_eq!(report.blocks[0].line_end, 3);
+    }
+
+    #[test]
+    fn test_label_open_paired_with_thenchange_close() {
+        // Symmetric cross-form: Label opens, ThenChange closes with
+        // targets. Both markers are recognised in the same loop, so
+        // they can mix.
+        let src = "\
+// Label('foo')
+x
+// ThenChange(/b.rs)
+";
+        let report = extract_blocks(src, "a.rs");
+        assert!(report.errors.is_empty(), "{:#?}", report.errors);
+        assert_eq!(report.blocks[0].id.as_deref(), Some("foo"));
+        assert_eq!(report.blocks[0].targets.len(), 1);
+        assert!(matches!(report.blocks[0].targets[0], Target::File { .. }));
+    }
+
+    #[test]
+    fn test_ifchange_open_paired_with_endlabel_close() {
+        // Symmetric cross-form: IfChange opens (no targets needed),
+        // EndLabel closes. Block has the id but no targets.
+        let src = "\
+// IfChange('bar')
+x
+// EndLabel
+";
+        let report = extract_blocks(src, "a.rs");
+        assert!(report.errors.is_empty(), "{:#?}", report.errors);
+        assert_eq!(report.blocks[0].id.as_deref(), Some("bar"));
+        assert!(report.blocks[0].targets.is_empty());
+    }
+
+    #[test]
+    fn test_orphan_endlabel_reported() {
+        // EndLabel with no preceding open marker — same OrphanThenChange
+        // error path as a stray ThenChange.
+        let src = "\
+x
+// EndLabel
+";
+        let report = extract_blocks(src, "a.rs");
+        assert!(report.blocks.is_empty());
+        assert_eq!(report.errors.len(), 1);
+        assert!(matches!(
+            report.errors[0],
+            MarkerParseError::OrphanThenChange { .. }
+        ));
+    }
+
+    #[test]
+    fn test_orphan_label_reported() {
+        // Label without matching EndLabel/ThenChange — same
+        // OrphanIfChange error as an open IfChange that never closes.
+        let src = "\
+// Label('foo')
+x
+";
+        let report = extract_blocks(src, "a.rs");
+        assert!(report.blocks.is_empty());
+        assert_eq!(report.errors.len(), 1);
+        assert!(matches!(
+            report.errors[0],
+            MarkerParseError::OrphanIfChange { .. }
+        ));
+    }
+
+    #[test]
+    fn test_endlabel_does_not_match_inside_word() {
+        // `\bEndLabel\b` must not match inside a larger identifier
+        // like `SuperEndLabelish`. Inverse: `Label` (without End-
+        // prefix) shouldn't accidentally trigger on `EndLabel` either.
+        let src = "\
+// SuperEndLabelish is not a marker
+let x = EndLabelExtra;
+";
+        let report = extract_blocks(src, "a.rs");
+        assert!(report.blocks.is_empty());
+        assert!(report.errors.is_empty(), "{:#?}", report.errors);
+    }
+
+    #[test]
+    fn test_label_bare_open_no_id_is_orphan() {
+        // `Label` without `('id')` is well-formed syntactically but
+        // semantically meaningless — same as `IfChange` without an
+        // id, which produces a block with id=None. Pair it with an
+        // EndLabel to confirm it parses through cleanly.
+        let src = "\
+// Label
+x
+// EndLabel
+";
+        let report = extract_blocks(src, "a.rs");
+        assert!(report.errors.is_empty(), "{:#?}", report.errors);
+        assert_eq!(report.blocks.len(), 1);
+        assert!(report.blocks[0].id.is_none());
     }
 }

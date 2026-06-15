@@ -7,6 +7,22 @@ versions follow [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+### Added
+
+- **`Label('name') ... EndLabel` marker recognition** in the IfChange
+  block parser (DESIGN §10.2 / §10.3 compat form). The compat markers
+  are now parsed as alternative open/close pairs alongside the
+  canonical `IfChange / ThenChange` — they produce the same internal
+  `IfChangeBlock` representation with the captured id, so a
+  `ThenChange(path:label-name)` elsewhere can target either form's
+  labelled region. Cross-form pairing is allowed
+  (`Label('foo') ... ThenChange(targets)`, `IfChange('bar') ... EndLabel`)
+  so codebases mid-migration aren't forced into one spelling. Per-pattern
+  config (DESIGN §10.3 `patterns.<id>.label`) and the
+  `label.*` doctor diagnostics (orphanOpen, orphanClose, duplicateInFile,
+  unused, ambiguousName) remain v0.3+ work — this PR ships the parser
+  recognition only.
+
 ### Changed
 
 - **`npm_publish.yml` workflow now triggers on tag push** instead of
