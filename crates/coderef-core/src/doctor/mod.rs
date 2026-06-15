@@ -178,6 +178,12 @@ pub fn run_doctor_with_workspace_and_commit_corpus(
     self::checks::check_category_mismatch(config, &refs, &mut additions);
     self::checks::check_anchor_skipped_ext(config, &refs, &mut additions);
     self::checks::check_anchor_style_mismatch(config, &refs, root.as_ref(), &mut additions);
+    // References-browser advisory checks (DESIGN §14.7.3) — surface
+    // configuration smells like an over-broad pattern blowing the
+    // node cap, or too many refs landing in the `other` fallback
+    // category.
+    self::checks::check_references_too_many_nodes(config, &refs, &mut additions);
+    self::checks::check_references_uncategorised_spike(config, &refs, &mut additions);
 
     // `commitMessage.requiredNeverFires` only runs when the caller
     // supplied a commit-log corpus; empty / `None` corpus means the

@@ -600,6 +600,162 @@ fn levenshtein_near_match(re: &fancy_regex::Regex, text: &str, max: u32) -> bool
     false
 }
 
+/// Default for `coderef.references.maxNodesPerLevel` per DESIGN
+/// §14.7.3. The references tree warns at this level rather than
+/// silently truncating; the actual cap is enforced at render time
+/// (TS extension) once `maxNodesPerLevel` is wired.
+const REFERENCES_MAX_NODES_PER_LEVEL: usize = 1000;
+
+/// Default threshold for `references.uncategorisedSpike` per DESIGN
+/// §14.7.3 — >10% of references in the `other` category fires.
+const REFERENCES_UNCATEGORISED_SPIKE_THRESHOLD: f64 = 0.10;
+
+/// `references.tooManyNodes` — any tree level (per-category or
+/// per-file) has more than `maxNodesPerLevel` references (DESIGN
+/// §14.7.3). Advisory only — the references-browser will truncate
+/// at render time, but the high level usually signals a missing
+/// secondary grouping (more granular `category` declarations, a
+/// pattern that's matching too liberally, etc.).
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn check_references_too_many_nodes(
+    cfg: &Config,
+    refs: &[crate::reference::Reference],
+    out: &mut Vec<Diagnostic>,
+) {
+    use std::collections::HashMap;
+    let mut by_pattern: HashMap<&str, usize> = HashMap::new();
+    let mut by_file: HashMap<&str, usize> = HashMap::new();
+    for r in refs {
+        *by_pattern.entry(r.pattern_id.as_str()).or_insert(0) += 1;
+        *by_file.entry(r.file.as_str()).or_insert(0) += 1;
+    }
+    let sev = cfg
+        .severity
+        .get("references.tooManyNodes")
+        .copied()
+        .unwrap_or(Severity::Info);
+    if sev == Severity::Off {
+        return;
+    }
+    for (pat_id, count) in by_pattern {
+        if count <= REFERENCES_MAX_NODES_PER_LEVEL {
+            continue;
+        }
+        out.push(Diagnostic {
+            check: "references.tooManyNodes".into(),
+            severity: sev,
+            pattern_id: Some(pat_id.to_string()),
+            message: format!(
+                "pattern `{pat_id}` matched {count} references — exceeds the \
+                 maxNodesPerLevel cap of {REFERENCES_MAX_NODES_PER_LEVEL}; the \
+                 references browser will truncate this branch"
+            ),
+            hint: Some(
+                "narrow the pattern's regex, split it into more granular \
+                 patterns with separate `category` declarations, or raise \
+                 `coderef.references.maxNodesPerLevel` if the volume is \
+                 intentional"
+                    .into(),
+            ),
+        });
+    }
+    for (file, count) in by_file {
+        if count <= REFERENCES_MAX_NODES_PER_LEVEL {
+            continue;
+        }
+        out.push(Diagnostic {
+            check: "references.tooManyNodes".into(),
+            severity: sev,
+            pattern_id: None,
+            message: format!(
+                "file `{file}` contains {count} references — exceeds the \
+                 maxNodesPerLevel cap of {REFERENCES_MAX_NODES_PER_LEVEL}; the \
+                 references browser will truncate this file's branch"
+            ),
+            hint: Some(
+                "this is usually a generated file (compile_commands.json, \
+                 bundle output); add the file to `ignore[]` in .coderef.jsonc"
+                    .into(),
+            ),
+        });
+    }
+}
+
+/// `references.uncategorisedSpike` — more than 10% of references in
+/// the workspace land in the `other` category (DESIGN §14.7.3).
+/// Advisory only — suggests setting an explicit `category` on more
+/// patterns or fixing pattern.category typos.
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn check_references_uncategorised_spike(
+    cfg: &Config,
+    refs: &[crate::reference::Reference],
+    out: &mut Vec<Diagnostic>,
+) {
+    if refs.is_empty() {
+        return;
+    }
+    // Resolve each ref's category the same way the references browser
+    // does: declared `category` on the pattern (if any), else the
+    // kind-inferred default.
+    let other_count = refs
+        .iter()
+        .filter(|r| effective_category(cfg, r) == "other")
+        .count();
+    // Precision-loss cast is OK here — ref counts in practice are
+    // well below 2^52 (f64 mantissa); the comparison is against a
+    // simple fraction so the loss-of-significand doesn't bite.
+    #[allow(clippy::cast_precision_loss)]
+    let ratio = other_count as f64 / refs.len() as f64;
+    if ratio <= REFERENCES_UNCATEGORISED_SPIKE_THRESHOLD {
+        return;
+    }
+    let sev = cfg
+        .severity
+        .get("references.uncategorisedSpike")
+        .copied()
+        .unwrap_or(Severity::Info);
+    if sev == Severity::Off {
+        return;
+    }
+    out.push(Diagnostic {
+        check: "references.uncategorisedSpike".into(),
+        severity: sev,
+        pattern_id: None,
+        message: format!(
+            "{other_count} of {total} references ({pct:.1}%) land in the `other` \
+             category — exceeds the {threshold:.0}% threshold",
+            total = refs.len(),
+            pct = ratio * 100.0,
+            threshold = REFERENCES_UNCATEGORISED_SPIKE_THRESHOLD * 100.0,
+        ),
+        hint: Some(
+            "declare `category` explicitly on patterns that currently fall \
+             back to `other`; see DESIGN §5.7 for the canonical category set, \
+             or suppress via `severity: { \"references.uncategorisedSpike\": \"off\" }`"
+                .into(),
+        ),
+    });
+}
+
+/// Resolve the effective category of a reference. Mirrors the
+/// extension's `categoryOf` and the references-browser tree's
+/// grouping — declared `category` wins, else kind-inferred default
+/// (DESIGN §5.7).
+#[cfg(not(target_arch = "wasm32"))]
+fn effective_category(cfg: &Config, r: &crate::reference::Reference) -> String {
+    if let Some(p) = cfg.patterns.get(&r.pattern_id) {
+        if let Some(ref c) = p.category {
+            return c.clone();
+        }
+        return match p.kind {
+            crate::config::PatternKind::Local => "files".to_string(),
+            crate::config::PatternKind::IfChange => "coupled-change".to_string(),
+            _ => "other".to_string(),
+        };
+    }
+    "other".to_string()
+}
+
 /// `commitMessage.requiredNeverFires` — a pattern declared
 /// `scope.commitMessage: "required"` doesn't match any commit in the
 /// recent commit log corpus the host passed in (DESIGN §16.1.1).
