@@ -664,6 +664,116 @@ fn doctor_label_ambiguous_name_fires_on_range_form() {
 }
 
 // ---------------------------------------------------------------------
+// references.uncategorisedSpike (DESIGN §14.7.3). Advisory check that
+// fires when more than 10% of references land in the `other` category.
+// ---------------------------------------------------------------------
+
+#[test]
+fn doctor_references_uncategorised_spike_fires_at_above_10_percent() {
+    // 4 of 10 refs in `other` (no category, kind=url defaults to
+    // `other`), 6 in `people` — 40% > 10% threshold.
+    let root = tmpdir("uncat-spike");
+    for i in 0..4 {
+        write(&root, &format!("o{i}.rs"), "// http://uncat.example/x");
+    }
+    for i in 0..6 {
+        write(&root, &format!("p{i}.rs"), "// http://people.example/x");
+    }
+    let cfg = Config::from_jsonc_str(
+        r#"{
+            "patterns": {
+                "uncat":  { "regex": "http://uncat\\.example/x",  "target": "static-target-u" },
+                "people": { "regex": "http://people\\.example/x", "target": "static-target-p", "category": "people" }
+            }
+        }"#,
+    )
+    .unwrap();
+    let report = run_doctor_with_workspace(&root, &cfg).unwrap();
+    let diag = report
+        .diagnostics
+        .iter()
+        .find(|d| d.check == "references.uncategorisedSpike");
+    assert!(diag.is_some(), "got: {:#?}", report.diagnostics);
+    assert_eq!(
+        diag.unwrap().severity,
+        coderef_core::severity::Severity::Info
+    );
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn doctor_references_uncategorised_spike_silent_at_exactly_threshold() {
+    // 1 of 10 = 10%, not strictly above. Threshold is `>`, not `>=`.
+    let root = tmpdir("uncat-quiet");
+    write(&root, "o0.rs", "// http://uncat.example/x");
+    for i in 0..9 {
+        write(&root, &format!("p{i}.rs"), "// http://people.example/x");
+    }
+    let cfg = Config::from_jsonc_str(
+        r#"{
+            "patterns": {
+                "uncat":  { "regex": "http://uncat\\.example/x",  "target": "static-target-u" },
+                "people": { "regex": "http://people\\.example/x", "target": "static-target-p", "category": "people" }
+            }
+        }"#,
+    )
+    .unwrap();
+    let report = run_doctor_with_workspace(&root, &cfg).unwrap();
+    assert!(!report
+        .diagnostics
+        .iter()
+        .any(|d| d.check == "references.uncategorisedSpike"));
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn doctor_references_uncategorised_spike_silent_with_no_refs() {
+    // Empty workspace → empty refs → no division by zero, no
+    // spurious diagnostic.
+    let root = tmpdir("uncat-empty");
+    let cfg = Config::from_jsonc_str(
+        r#"{ "patterns": { "todo": {
+            "regex": "TODO\\(@(?<user>\\w+)\\)",
+            "target": "x/${user}"
+        } } }"#,
+    )
+    .unwrap();
+    let report = run_doctor_with_workspace(&root, &cfg).unwrap();
+    assert!(!report
+        .diagnostics
+        .iter()
+        .any(|d| d.check == "references.uncategorisedSpike"));
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn doctor_references_uncategorised_spike_off_severity_suppresses() {
+    let root = tmpdir("uncat-off");
+    for i in 0..4 {
+        write(&root, &format!("o{i}.rs"), "// http://uncat.example/x");
+    }
+    for i in 0..6 {
+        write(&root, &format!("p{i}.rs"), "// http://people.example/x");
+    }
+    let cfg = Config::from_jsonc_str(
+        r#"{
+            "severity": { "references.uncategorisedSpike": "off" },
+            "patterns": {
+                "uncat":  { "regex": "http://uncat\\.example/x",  "target": "static-target-u" },
+                "people": { "regex": "http://people\\.example/x", "target": "static-target-p", "category": "people" }
+            }
+        }"#,
+    )
+    .unwrap();
+    let report = run_doctor_with_workspace(&root, &cfg).unwrap();
+    assert!(!report
+        .diagnostics
+        .iter()
+        .any(|d| d.check == "references.uncategorisedSpike"));
+    fs::remove_dir_all(&root).unwrap();
+}
+
+// ---------------------------------------------------------------------
 // commitMessage.requiredNeverFires (DESIGN §16.1.1). The check fires
 // when a pattern declared `scope.commitMessage: "required"` doesn't
 // match any commit message in the corpus the host supplies (typically

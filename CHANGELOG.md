@@ -9,6 +9,17 @@ versions follow [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`references.tooManyNodes` + `references.uncategorisedSpike`
+  doctor diagnostics** (DESIGN §14.7.3). Two new scan-dependent
+  Info-severity checks for the references-browser tree.
+  `references.tooManyNodes` fires when any pattern matches more
+  than 1000 references workspace-wide, or any single file contains
+  more than 1000 references — both signal that the references
+  browser will truncate the corresponding tree branch and a more
+  granular grouping is in order. `references.uncategorisedSpike`
+  fires when more than 10% of references land in the `other`
+  fallback category — suggests declaring `category` explicitly on
+  more patterns.
 - **References-browser exportJson command** (DESIGN §14.7 v0.3 long
   tail). New `coderef.references.exportJson` command pops a save
   dialog and writes the current reference set to disk as a stable
