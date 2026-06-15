@@ -134,3 +134,71 @@ test("buildTree handles missing config gracefully (falls back to kind inference)
   assert.equal(roots.length, 1);
   assert.match(roots[0]!.label as string, /other/);
 });
+
+// ---------------------------------------------------------------------
+// renderReferencesAsMarkdown — pure markdown formatter for the
+// Copy-as-Markdown command. Tests cover empty / single / multi-cat /
+// multi-file shapes plus backtick escaping in matched_text.
+// ---------------------------------------------------------------------
+
+test("renderReferencesAsMarkdown emits an empty-stub when given zero refs", () => {
+  const md = referencesView.renderReferencesAsMarkdown([], undefined);
+  assert.match(md, /# coderef references/);
+  assert.match(md, /No references in the current scan\./);
+});
+
+test("renderReferencesAsMarkdown groups by category then file and lists refs", () => {
+  const refs = [
+    r({ pattern_id: "todo", file: "src/a.rs", line: 12, matched_text: "TODO(@alice)" }),
+    r({ pattern_id: "todo", file: "src/b.rs", line: 3, matched_text: "TODO(@bob)" }),
+    r({ pattern_id: "jira", file: "docs/x.md", line: 47, matched_text: "JIRA(PROJ-1)" }),
+  ];
+  const c = cfg({ todo: { category: "people" }, jira: { category: "tickets" } });
+  const md = referencesView.renderReferencesAsMarkdown(refs, c);
+
+  // Header + summary.
+  assert.match(md, /# coderef references/);
+  assert.match(md, /3 references across 3 files in 2 categories/);
+  // Category-section ordering: tickets (display 2) before people (display 1)?
+  // Per DISPLAY_ORDER, files(0) < people(1) < tickets(2) — so people first.
+  const peoplePos = md.indexOf("## 👤 people");
+  const ticketsPos = md.indexOf("## 🎫 tickets");
+  assert.ok(peoplePos !== -1 && ticketsPos !== -1);
+  assert.ok(peoplePos < ticketsPos, `people should come before tickets; got md =\n${md}`);
+  // File subheadings.
+  assert.match(md, /### src\/a\.rs/);
+  assert.match(md, /### src\/b\.rs/);
+  assert.match(md, /### docs\/x\.md/);
+  // Leaf format: `path:line` — `[pattern] match` → target.
+  assert.match(md, /`src\/a\.rs:12` — `\[todo\] TODO\(@alice\)` → https:\/\/github\.com\/alice/);
+});
+
+test("renderReferencesAsMarkdown escapes backticks in matched text", () => {
+  const refs = [r({ matched_text: "TODO `back` tick" })];
+  const c = cfg({ "todo-user": { category: "people" } });
+  const md = referencesView.renderReferencesAsMarkdown(refs, c);
+  // Literal backticks in matched text would close the leaf's inline-
+  // code span; escape them.
+  assert.match(md, /TODO \\`back\\` tick/);
+});
+
+test("renderReferencesAsMarkdown handles a single reference cleanly (singular grammar)", () => {
+  const refs = [r({})];
+  const md = referencesView.renderReferencesAsMarkdown(refs, undefined);
+  assert.match(md, /1 reference across 1 file in 1 category/);
+});
+
+test("renderReferencesAsMarkdown sorts refs within a file by byte_start", () => {
+  const refs = [
+    r({ file: "a.rs", byte_start: 200, line: 20 }),
+    r({ file: "a.rs", byte_start: 100, line: 10 }),
+    r({ file: "a.rs", byte_start: 50, line: 5 }),
+  ];
+  const md = referencesView.renderReferencesAsMarkdown(refs, undefined);
+  // The line numbers in the rendered output should appear in 5, 10, 20 order.
+  const idx5 = md.indexOf("a.rs:5");
+  const idx10 = md.indexOf("a.rs:10");
+  const idx20 = md.indexOf("a.rs:20");
+  assert.ok(idx5 !== -1 && idx10 !== -1 && idx20 !== -1);
+  assert.ok(idx5 < idx10 && idx10 < idx20, `expected 5→10→20 order; got md =\n${md}`);
+});

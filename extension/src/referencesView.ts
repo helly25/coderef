@@ -14,9 +14,13 @@
 // Deferred to v0.3 (DESIGN.md §14.7 longer tail):
 //   - Scan modes (workspace / openFiles / currentFile selector)
 //   - Mine / Unverified / Drifted filters
-//   - Multi-target hover alternates, Copy-as-Markdown, exportJson
+//   - Multi-target hover alternates, exportJson
 //   - references.tooManyNodes / uncategorisedSpike doctor checks
 //   - maxNodesPerLevel cap
+//
+// Shipped in v0.3:
+//   - Copy-as-Markdown command (this file: getAllRefs +
+//     renderReferencesAsMarkdown).
 
 import * as path from "node:path";
 
@@ -217,6 +221,18 @@ export class ReferencesTreeProvider implements vscode.TreeDataProvider<Node> {
     this.emitter.fire();
   }
 
+  /** Flatten the current tree back to a `EngineReference[]`. Used by
+   *  Copy-as-Markdown and any downstream export — the provider owns
+   *  the most-recent scan, so consumers don't need a separate cache. */
+  getAllRefs(): EngineReference[] {
+    if (!this.index) return [];
+    const out: EngineReference[] = [];
+    for (const byFile of this.index.byCategory.values()) {
+      for (const refs of byFile.values()) out.push(...refs);
+    }
+    return out;
+  }
+
   getTreeItem(element: Node): vscode.TreeItem {
     return element;
   }
@@ -293,4 +309,120 @@ function extOf(fsPath: string): string | undefined {
   const dot = fsPath.lastIndexOf(".");
   if (dot === -1 || dot === fsPath.length - 1) return undefined;
   return fsPath.slice(dot + 1);
+}
+
+/** Render a reference set as a category-grouped Markdown document.
+ *
+ *  Pure function — testable without VSCode. Used by the
+ *  Copy-as-Markdown command (DESIGN.md §14.7 v0.3 long tail). The
+ *  result is suitable for pasting into PR descriptions, design docs,
+ *  ticketing systems, etc.
+ *
+ *  Layout:
+ *    # coderef references
+ *    _N references across F files in C categories_
+ *
+ *    ## 🎫 tickets (5)
+ *
+ *    ### src/lib.rs
+ *    - `src/lib.rs:12` — `[jira] JIRA(PROJ-1)` → https://jira.example/PROJ-1
+ *    ...
+ *
+ *  We use a list rather than a markdown table on purpose: table
+ *  formatting requires column alignment to round-trip cleanly through
+ *  table-aware reformatters, and the alignment cost dominates the
+ *  layout. A bullet list reads well in any renderer and survives
+ *  edits.
+ */
+export function renderReferencesAsMarkdown(
+  refs: EngineReference[],
+  config: LoadedConfig | undefined,
+): string {
+  const lines: string[] = [];
+  lines.push("# coderef references");
+  lines.push("");
+  if (refs.length === 0) {
+    lines.push("_No references in the current scan._");
+    return lines.join("\n");
+  }
+
+  // Group by category → file the same way the tree does.
+  const byCategory = new Map<string, Map<string, EngineReference[]>>();
+  for (const ref of refs) {
+    const cat = categoryOf(ref, config);
+    if (!byCategory.has(cat)) byCategory.set(cat, new Map());
+    const byFile = byCategory.get(cat)!;
+    if (!byFile.has(ref.file)) byFile.set(ref.file, []);
+    byFile.get(ref.file)!.push(ref);
+  }
+  const categories = [...byCategory.keys()].sort((a, b) => {
+    const ao = displayOrder(a);
+    const bo = displayOrder(b);
+    if (ao !== bo) return ao - bo;
+    return a.localeCompare(b);
+  });
+  const fileSet = new Set<string>();
+  for (const byFile of byCategory.values()) for (const f of byFile.keys()) fileSet.add(f);
+  lines.push(
+    `_${refs.length} reference${refs.length === 1 ? "" : "s"} across ` +
+      `${fileSet.size} file${fileSet.size === 1 ? "" : "s"} in ` +
+      `${categories.length} categor${categories.length === 1 ? "y" : "ies"}._`,
+  );
+  lines.push("");
+
+  for (const cat of categories) {
+    const byFile = byCategory.get(cat)!;
+    const total = [...byFile.values()].reduce((sum, refs) => sum + refs.length, 0);
+    lines.push(`## ${glyphOf(cat)} ${cat} (${total})`);
+    lines.push("");
+    const files = [...byFile.keys()].sort();
+    for (const file of files) {
+      lines.push(`### ${file}`);
+      lines.push("");
+      const fileRefs = byFile.get(file)!.slice().sort((a, b) => a.byte_start - b.byte_start);
+      for (const ref of fileRefs) {
+        const matched = escapeBackticks(ref.matched_text);
+        lines.push(
+          `- \`${file}:${ref.line}\` — \`[${ref.pattern_id}] ${matched}\` → ${ref.target}`,
+        );
+      }
+      lines.push("");
+    }
+  }
+
+  return lines.join("\n").replace(/\n+$/, "\n");
+}
+
+function escapeBackticks(s: string): string {
+  return s.replace(/`/g, "\\`");
+}
+
+/** `coderef.references.copyAsMarkdown` command body. Pulls the current
+ *  reference set from the provider, renders it via
+ *  `renderReferencesAsMarkdown`, copies to the clipboard, and surfaces
+ *  a short status-bar acknowledgement. Returns the rendered text for
+ *  test introspection.
+ */
+export async function copyReferencesAsMarkdownCommand(
+  provider: ReferencesTreeProvider,
+  getConfig: () => LoadedConfig | undefined,
+  api: {
+    clipboardWrite: (text: string) => Promise<void>;
+    showInfo: (msg: string) => void;
+  } = {
+    clipboardWrite: (text) => Promise.resolve(vscode.env.clipboard.writeText(text)),
+    showInfo: (msg) => void vscode.window.showInformationMessage(msg),
+  },
+): Promise<string> {
+  const refs = provider.getAllRefs();
+  const markdown = renderReferencesAsMarkdown(refs, getConfig());
+  await api.clipboardWrite(markdown);
+  if (refs.length === 0) {
+    api.showInfo("coderef: copied an empty-references stub to the clipboard.");
+  } else {
+    api.showInfo(
+      `coderef: copied ${refs.length} reference${refs.length === 1 ? "" : "s"} as Markdown.`,
+    );
+  }
+  return markdown;
 }
