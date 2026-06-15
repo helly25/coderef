@@ -996,7 +996,19 @@ fn cmd_changes(args: Vec<String>) -> ExitCode {
 
 fn print_changes_text(r: &coderef_core::ifchange::ChangesReport) {
     for v in &r.violations {
-        println!("[{kind}] {msg}", kind = v.kind, msg = v.message);
+        // Tag warnings explicitly so the reader sees they don't fail
+        // the run; errors stay in the original `[kind] msg` shape so
+        // pre-existing log scrapers keep parsing.
+        let sev = match v.severity {
+            coderef_core::severity::Severity::Warning => "warn/",
+            _ => "",
+        };
+        println!(
+            "[{sev}{kind}] {msg}",
+            sev = sev,
+            kind = v.kind,
+            msg = v.message,
+        );
     }
     for e in &r.parse_errors {
         println!("[parse-error/{kind}] {msg}", kind = e.kind, msg = e.message);
@@ -1004,14 +1016,21 @@ fn print_changes_text(r: &coderef_core::ifchange::ChangesReport) {
     if !r.violations.is_empty() || !r.parse_errors.is_empty() {
         println!();
     }
+    let warn_count = r
+        .violations
+        .iter()
+        .filter(|v| v.severity == coderef_core::severity::Severity::Warning)
+        .count();
+    let err_count = r.violations.len() - warn_count;
     println!(
         "Changes report: {bc} block(s), {cc} changed, {vc} violating, {nv} no-verify. \
-         {vio} violation(s), {pe} parse-error(s).",
+         {err} error(s), {warn} warning(s), {pe} parse-error(s).",
         bc = r.block_count,
         cc = r.changed_block_count,
         vc = r.violating_block_count,
         nv = r.no_verify_block_count,
-        vio = r.violations.len(),
+        err = err_count,
+        warn = warn_count,
         pe = r.parse_errors.len(),
     );
 }

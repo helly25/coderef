@@ -96,16 +96,34 @@ pub enum Target {
     /// `flag = All`  → every matched file must change.
     /// Glob patterns are recognised by the presence of `*` (or `?` /
     /// `[...]`) in the path.
-    FileGlob { pattern: String, flag: GlobFlag },
+    FileGlob { pattern: String, flags: GlobFlags },
 }
 
-/// Suffix flag on a glob target. DESIGN.md §10.2. v0.2 ships `Any`
-/// (default) and `All`. The `{soft}` flag (warning severity) is a
-/// v0.3 follow-up alongside richer severity tuning.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum GlobFlag {
+/// Glob-target match mode (DESIGN §10.2). `Any` is the default and
+/// means "at least one matched-and-changed satisfies the target";
+/// `All` requires every matched file to be touched (strict semantics
+/// land alongside workspace enumeration in a follow-up — see verifier
+/// comment).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum GlobMode {
+    #[default]
     Any,
     All,
+}
+
+/// Suffix flag set on a glob target. DESIGN.md §10.2 lists `{any}` /
+/// `{all}` as mode flags (mutually exclusive) and `{soft}` as a
+/// severity modifier (orthogonal — `{soft,all}` and `{soft,any}` are
+/// both legal). Combinations are written comma-separated inside the
+/// braces: `/docs/*.md{any,soft}` etc. Whitespace around the comma
+/// is allowed.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct GlobFlags {
+    pub mode: GlobMode,
+    /// `true` iff `{soft}` was set. Demotes constraint-failure
+    /// violations from `Error` to `Warning` severity so they're
+    /// surfaced in reports but don't fail the exit code.
+    pub soft: bool,
 }
 
 impl Target {
@@ -293,21 +311,46 @@ pub fn extract_blocks(content: &str, file: &str) -> MarkerParseReport {
     MarkerParseReport { blocks, errors }
 }
 
-/// Split a `ThenChange(...)` arg list on commas, respecting nothing
-/// fancier than v0.2 needs (no escaped commas, no nested parens —
-/// targets like `JIRA(PROJ-1)` are deferred to Shape C in v0.3).
+/// Split a `ThenChange(...)` arg list on commas. Commas inside `{...}`
+/// brace groups (glob-flag sets like `{any,soft}`) don't separate
+/// targets — they're flag-list separators handled downstream by
+/// `strip_glob_flag`. Nested parens for Shape C ids aren't possible
+/// in this position (`ThenChange` targets are paths/labels/anchors/
+/// globs, never function-call-shaped ids), so we don't track them.
 fn split_targets(s: &str) -> Vec<String> {
-    s.split(',').map(|part| part.trim().to_string()).collect()
+    let mut out = Vec::new();
+    let mut current = String::new();
+    let mut brace_depth: usize = 0;
+    for c in s.chars() {
+        match c {
+            '{' => {
+                brace_depth += 1;
+                current.push(c);
+            }
+            '}' => {
+                brace_depth = brace_depth.saturating_sub(1);
+                current.push(c);
+            }
+            ',' if brace_depth == 0 => {
+                out.push(std::mem::take(&mut current).trim().to_string());
+            }
+            _ => current.push(c),
+        }
+    }
+    if !current.is_empty() || !out.is_empty() {
+        out.push(current.trim().to_string());
+    }
+    out
 }
 
-/// Strip a trailing `{any}` or `{all}` glob-flag if present.
+/// Strip a trailing `{...}` glob-flag set if present.
 ///
-/// Returns `(stripped_body, Some(flag))` on success; `(raw, None)`
-/// when no flag is present. An unknown flag (e.g. `{soft}` in v0.2
-/// or any other token between braces) is rejected as malformed —
-/// catches typos like `{andy}` rather than silently treating them
-/// as the default.
-fn strip_glob_flag(raw: &str) -> Result<(&str, Option<GlobFlag>), ()> {
+/// Returns `(stripped_body, Some(flags))` on success; `(raw, None)`
+/// when no flag braces are present. Body is comma-separated tokens
+/// drawn from `any` / `all` / `soft`. Unknown tokens (typos like
+/// `{andy}`) and contradictions (`{any,all}` — modes are mutually
+/// exclusive) are rejected as malformed.
+fn strip_glob_flag(raw: &str) -> Result<(&str, Option<GlobFlags>), ()> {
     if !raw.ends_with('}') {
         return Ok((raw, None));
     }
@@ -316,12 +359,38 @@ fn strip_glob_flag(raw: &str) -> Result<(&str, Option<GlobFlag>), ()> {
     };
     let body = &raw[open + 1..raw.len() - 1];
     let head = &raw[..open];
-    let flag = match body {
-        "any" => GlobFlag::Any,
-        "all" => GlobFlag::All,
-        _ => return Err(()),
-    };
-    Ok((head, Some(flag)))
+    let mut mode: Option<GlobMode> = None;
+    let mut soft = false;
+    for token in body.split(',').map(str::trim) {
+        match token {
+            "any" => {
+                if mode.is_some() {
+                    return Err(());
+                }
+                mode = Some(GlobMode::Any);
+            }
+            "all" => {
+                if mode.is_some() {
+                    return Err(());
+                }
+                mode = Some(GlobMode::All);
+            }
+            "soft" => {
+                if soft {
+                    return Err(());
+                }
+                soft = true;
+            }
+            _ => return Err(()),
+        }
+    }
+    Ok((
+        head,
+        Some(GlobFlags {
+            mode: mode.unwrap_or_default(),
+            soft,
+        }),
+    ))
 }
 
 /// Extract the paren-balanced id text following `IfChange` on `line`,
@@ -389,15 +458,15 @@ fn strip_matching_quotes(s: &str) -> &str {
 /// - `path:label-name`
 /// - `path#anchor`
 /// - `path-glob` (containing `*` / `?` / `[...]`)
-/// - any of the above with a trailing `{any}` or `{all}` flag (only
-///   meaningful on glob patterns; for non-globs the flag is parsed
-///   but ignored)
+/// - any of the above with a trailing `{any|all|soft}` flag set —
+///   comma-separated tokens inside one brace pair. Only meaningful
+///   on glob patterns; for non-globs the flag is parsed but ignored.
 ///
 /// Anything else is `MalformedTarget` at the caller. Flag-parsing
 /// happens first, then `#` vs `:` disambiguator.
 fn parse_target(raw: &str) -> Result<Target, ()> {
-    // Strip a trailing `{any}` or `{all}` flag if present.
-    let (raw, flag) = strip_glob_flag(raw)?;
+    // Strip a trailing `{...}` flag set if present.
+    let (raw, flags) = strip_glob_flag(raw)?;
 
     // Glob detection: pattern characters anywhere in the body trigger
     // the glob branch. Globs are mutually exclusive with `:` /  `#`
@@ -409,15 +478,14 @@ fn parse_target(raw: &str) -> Result<Target, ()> {
         }
         return Ok(Target::FileGlob {
             pattern: raw.to_string(),
-            flag: flag.unwrap_or(GlobFlag::Any),
+            flags: flags.unwrap_or_default(),
         });
     }
 
     // A flag on a non-glob target is meaningless (DESIGN §10.2's
     // table says these flags apply to globs); accept silently to
-    // preserve forward-compat with `{soft}` rolling out as a
-    // general severity modifier later.
-    let _ = flag;
+    // preserve forward-compat with future flag additions.
+    let _ = flags;
     // Anchor form `path#anchor` first.
     if let Some((path, anchor)) = raw.split_once('#') {
         if path.is_empty() || anchor.is_empty() {
@@ -910,7 +978,10 @@ x
         assert!(report.errors.is_empty(), "{:#?}", report.errors);
         assert!(matches!(
             report.blocks[0].targets[0],
-            Target::FileGlob { ref pattern, flag: GlobFlag::Any }
+            Target::FileGlob {
+                ref pattern,
+                flags: GlobFlags { mode: GlobMode::Any, soft: false },
+            }
                 if pattern == "/docs/api/*.md"
         ));
     }
@@ -927,7 +998,10 @@ x
         assert!(matches!(
             report.blocks[0].targets[0],
             Target::FileGlob {
-                flag: GlobFlag::All,
+                flags: GlobFlags {
+                    mode: GlobMode::All,
+                    soft: false
+                },
                 ..
             }
         ));
@@ -945,20 +1019,95 @@ x
         assert!(matches!(
             report.blocks[0].targets[0],
             Target::FileGlob {
-                flag: GlobFlag::Any,
+                flags: GlobFlags {
+                    mode: GlobMode::Any,
+                    soft: false
+                },
                 ..
             }
         ));
     }
 
     #[test]
-    fn test_parse_unknown_glob_flag_rejected() {
-        // `{soft}` is documented but deferred; the parser should
-        // reject unknown flags rather than silently dropping them.
+    fn test_parse_glob_target_with_soft_flag() {
         let src = "\
 // IfChange
 x
 // ThenChange(/docs/*.md{soft})
+";
+        let report = extract_blocks(src, "a.rs");
+        assert!(report.errors.is_empty(), "{:#?}", report.errors);
+        // `{soft}` alone: implicit any-mode + warning severity.
+        assert!(matches!(
+            report.blocks[0].targets[0],
+            Target::FileGlob {
+                flags: GlobFlags {
+                    mode: GlobMode::Any,
+                    soft: true
+                },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_parse_glob_target_with_all_and_soft_flag() {
+        // `{all,soft}` and `{soft,all}` both legal — flags are
+        // comma-separated, order-insensitive.
+        for src in [
+            "// IfChange\nx\n// ThenChange(/docs/*.md{all,soft})\n",
+            "// IfChange\nx\n// ThenChange(/docs/*.md{soft,all})\n",
+            "// IfChange\nx\n// ThenChange(/docs/*.md{all, soft})\n",
+        ] {
+            let report = extract_blocks(src, "a.rs");
+            assert!(report.errors.is_empty(), "{src:?}: {:#?}", report.errors);
+            assert!(
+                matches!(
+                    report.blocks[0].targets[0],
+                    Target::FileGlob {
+                        flags: GlobFlags {
+                            mode: GlobMode::All,
+                            soft: true
+                        },
+                        ..
+                    }
+                ),
+                "src = {src:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_parse_glob_flag_duplicates_rejected() {
+        // `{any,all}` is contradictory (mutually exclusive modes); the
+        // parser refuses it as malformed.
+        let src = "\
+// IfChange
+x
+// ThenChange(/docs/*.md{any,all})
+";
+        let report = extract_blocks(src, "a.rs");
+        assert!(report.blocks[0].targets.is_empty());
+        assert_eq!(report.errors.len(), 1);
+        // `{soft,soft}` is also rejected.
+        let src = "\
+// IfChange
+x
+// ThenChange(/docs/*.md{soft,soft})
+";
+        let report = extract_blocks(src, "a.rs");
+        assert!(report.blocks[0].targets.is_empty());
+        assert_eq!(report.errors.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_unknown_glob_flag_rejected() {
+        // Unknown tokens are rejected as malformed (catches typos like
+        // `{andy}` rather than silently treating them as the default).
+        let src = "\
+// IfChange
+x
+// ThenChange(/docs/*.md{andy})
 ";
         let report = extract_blocks(src, "a.rs");
         assert!(report.blocks[0].targets.is_empty());
