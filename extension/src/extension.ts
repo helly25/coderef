@@ -23,6 +23,7 @@ import { ReferenceCache } from "./referenceCache";
 import {
   ReferencesTreeProvider,
   copyReferencesAsMarkdownCommand,
+  exportReferencesAsJsonCommand,
   rescanWorkspace,
 } from "./referencesView";
 import { engineVersion } from "./wasmEngine";
@@ -88,6 +89,15 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand("coderef.references.copyAsMarkdown", () => {
       void copyReferencesAsMarkdownCommand(refsProvider, () => currentConfig);
+    }),
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand("coderef.references.exportJson", () => {
+      void exportReferencesAsJsonCommand(
+        refsProvider,
+        () => currentConfig,
+        engineVersion(),
+      );
     }),
   );
   // Initial population.

@@ -64,6 +64,12 @@
         "title": "coderef: Copy references as Markdown",
         "category": "coderef",
         "icon": "$(clippy)"
+      },
+      {
+        "command": "coderef.references.exportJson",
+        "title": "coderef: Export references as JSON",
+        "category": "coderef",
+        "icon": "$(save-as)"
       }
     ],
     "menus": {
@@ -81,9 +87,14 @@
           "group": "navigation@1"
         },
         {
-          "command": "coderef.references.refresh",
+          "command": "coderef.references.exportJson",
           "when": "view == coderef.references",
           "group": "navigation@2"
+        },
+        {
+          "command": "coderef.references.refresh",
+          "when": "view == coderef.references",
+          "group": "navigation@3"
         }
       ]
     },
