@@ -663,6 +663,133 @@ fn doctor_label_ambiguous_name_fires_on_range_form() {
     fs::remove_dir_all(&root).unwrap();
 }
 
+// ---------------------------------------------------------------------
+// commitMessage.requiredNeverFires (DESIGN §16.1.1). The check fires
+// when a pattern declared `scope.commitMessage: "required"` doesn't
+// match any commit message in the corpus the host supplies (typically
+// the last N commit bodies). With no corpus (None / empty), the check
+// is silently skipped — the host couldn't fetch one, and we'd rather
+// be silent than flag every required pattern.
+// ---------------------------------------------------------------------
+
+#[test]
+fn doctor_commit_required_never_fires_when_corpus_has_no_matches() {
+    use coderef_core::doctor::run_doctor_with_workspace_and_commit_corpus;
+    let root = tmpdir("cm-required-miss");
+    let cfg = Config::from_jsonc_str(
+        r#"{ "patterns": { "jira": {
+            "regex": "JIRA-\\d+",
+            "target": "j/${0}",
+            "scope": { "commitMessage": "required" }
+        } } }"#,
+    )
+    .unwrap();
+    let corpus: Vec<String> = ["fix: bump deps", "chore: rename", "docs: clarify"]
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+    let report = run_doctor_with_workspace_and_commit_corpus(&root, &cfg, Some(&corpus)).unwrap();
+    let diag = report
+        .diagnostics
+        .iter()
+        .find(|d| d.check == "commitMessage.requiredNeverFires");
+    assert!(diag.is_some(), "got: {:#?}", report.diagnostics);
+    assert_eq!(
+        diag.unwrap().severity,
+        coderef_core::severity::Severity::Warning
+    );
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn doctor_commit_required_silent_when_one_message_matches() {
+    use coderef_core::doctor::run_doctor_with_workspace_and_commit_corpus;
+    let root = tmpdir("cm-required-hit");
+    let cfg = Config::from_jsonc_str(
+        r#"{ "patterns": { "jira": {
+            "regex": "JIRA-\\d+",
+            "target": "j/${0}",
+            "scope": { "commitMessage": "required" }
+        } } }"#,
+    )
+    .unwrap();
+    let corpus: Vec<String> = ["fix JIRA-42: bump deps", "chore: rename"]
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+    let report = run_doctor_with_workspace_and_commit_corpus(&root, &cfg, Some(&corpus)).unwrap();
+    assert!(!report
+        .diagnostics
+        .iter()
+        .any(|d| d.check == "commitMessage.requiredNeverFires"));
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn doctor_commit_required_silent_when_corpus_is_empty() {
+    // Empty corpus = host couldn't gather one. Don't flag.
+    use coderef_core::doctor::run_doctor_with_workspace_and_commit_corpus;
+    let root = tmpdir("cm-required-empty");
+    let cfg = Config::from_jsonc_str(
+        r#"{ "patterns": { "jira": {
+            "regex": "JIRA-\\d+",
+            "target": "j/${0}",
+            "scope": { "commitMessage": "required" }
+        } } }"#,
+    )
+    .unwrap();
+    let report = run_doctor_with_workspace_and_commit_corpus(&root, &cfg, Some(&[])).unwrap();
+    assert!(!report
+        .diagnostics
+        .iter()
+        .any(|d| d.check == "commitMessage.requiredNeverFires"));
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn doctor_commit_required_silent_when_corpus_is_none() {
+    // None corpus = check doesn't run at all (back-compat with the
+    // 2-arg `run_doctor_with_workspace`).
+    let root = tmpdir("cm-required-none");
+    let cfg = Config::from_jsonc_str(
+        r#"{ "patterns": { "jira": {
+            "regex": "JIRA-\\d+",
+            "target": "j/${0}",
+            "scope": { "commitMessage": "required" }
+        } } }"#,
+    )
+    .unwrap();
+    let report = run_doctor_with_workspace(&root, &cfg).unwrap();
+    assert!(!report
+        .diagnostics
+        .iter()
+        .any(|d| d.check == "commitMessage.requiredNeverFires"));
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn doctor_commit_required_silent_when_pattern_is_not_required() {
+    // `scope.commitMessage: true` (Scan, not Required) shouldn't
+    // trigger the never-fires check.
+    use coderef_core::doctor::run_doctor_with_workspace_and_commit_corpus;
+    let root = tmpdir("cm-scan-not-required");
+    let cfg = Config::from_jsonc_str(
+        r#"{ "patterns": { "jira": {
+            "regex": "JIRA-\\d+",
+            "target": "j/${0}",
+            "scope": { "commitMessage": true }
+        } } }"#,
+    )
+    .unwrap();
+    let corpus: Vec<String> = vec!["fix: bump deps".to_string()];
+    let report = run_doctor_with_workspace_and_commit_corpus(&root, &cfg, Some(&corpus)).unwrap();
+    assert!(!report
+        .diagnostics
+        .iter()
+        .any(|d| d.check == "commitMessage.requiredNeverFires"));
+    fs::remove_dir_all(&root).unwrap();
+}
+
 #[test]
 fn doctor_label_ambiguous_name_silent_on_alphanumeric_with_digits() {
     // `Label('block-1')` and `Label('q42')` are fine — they have at

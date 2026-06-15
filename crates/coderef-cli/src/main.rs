@@ -398,7 +398,17 @@ fn cmd_doctor(args: Vec<String>) -> ExitCode {
 
     let report_value = if scan {
         let r = root.as_deref().unwrap_or(".");
-        match coderef_core::doctor::run_doctor_with_workspace(r, &cfg) {
+        // Gather the last N commit messages so the
+        // `commitMessage.requiredNeverFires` check has a corpus to
+        // evaluate against. Non-fatal if git isn't available — we
+        // simply skip the check (the doctor itself silently no-ops
+        // on an empty corpus).
+        let commit_corpus = gather_commit_corpus(r, 200);
+        match coderef_core::doctor::run_doctor_with_workspace_and_commit_corpus(
+            r,
+            &cfg,
+            commit_corpus.as_deref(),
+        ) {
             Ok(r) => r,
             Err(e) => {
                 eprintln!("coderef doctor: {e}");
@@ -425,6 +435,35 @@ fn cmd_doctor(args: Vec<String>) -> ExitCode {
     } else {
         ExitCode::from(1)
     }
+}
+
+/// Run `git log -n <n> --format=%B%x00` rooted at `root` and return
+/// the resulting commit-message bodies. NUL is the inter-message
+/// separator so commit bodies containing blank lines survive intact.
+///
+/// Returns `None` if the git invocation fails for any reason (not a
+/// git repo, git not on PATH, etc.) — the caller treats `None` as
+/// "no corpus available, skip the corpus-dependent checks rather
+/// than flag everything as never-fired".
+fn gather_commit_corpus(root: &str, n: usize) -> Option<Vec<String>> {
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .arg("log")
+        .arg(format!("-n{n}"))
+        .arg("--format=%B%x00")
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let raw = String::from_utf8_lossy(&out.stdout).into_owned();
+    Some(
+        raw.split('\0')
+            .map(|s| s.trim_matches('\n').to_string())
+            .filter(|s| !s.is_empty())
+            .collect(),
+    )
 }
 
 fn print_doctor_text(report: &coderef_core::doctor::DoctorReport) {
