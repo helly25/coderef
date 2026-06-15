@@ -9,6 +9,17 @@ versions follow [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **References-browser scan modes + setScanMode command** (DESIGN
+  §14.7). New `coderef.references.scanMode` setting controls which
+  files the references browser walks on refresh: `workspace`
+  (default — every in-scope file honouring .gitignore + config
+  `ignore[]`), `openFiles` (only currently-open TextDocuments), or
+  `currentFile` (only the active editor's file). New
+  `coderef.references.setScanMode` palette command pops a
+  quick-pick with descriptions per mode, persists the choice to
+  workspace (or user-global) settings, and triggers an immediate
+  rescan. Useful on very large repos where scanning everything is
+  the slow path.
 - **`coderef.references.maxNodesPerLevel` setting + tree truncation
   placeholder** (DESIGN §14.7.3). The references browser now honours
   a per-workspace cap (default `1000`, min `10`) on the number of

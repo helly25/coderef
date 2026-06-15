@@ -317,7 +317,60 @@ export class ReferencesTreeProvider implements vscode.TreeDataProvider<Node> {
   }
 }
 
-/** Walk the workspace, scan every in-scope file, and update the tree. */
+/** Scan mode for the references browser (DESIGN §14.7). Determines
+ *  which subset of files the next rescan walks. Sourced from the
+ *  `coderef.references.scanMode` setting; defaults to `workspace`.
+ */
+export type ScanMode = "workspace" | "openFiles" | "currentFile";
+
+/** Read `coderef.references.scanMode` and normalise to a recognised
+ *  enum value. Unknown / missing values fall back to `workspace`.
+ */
+export function scanModeSetting(): ScanMode {
+  const cfg = vscode.workspace.getConfiguration("coderef.references");
+  const raw = cfg.get<string>("scanMode", "workspace");
+  switch (raw) {
+    case "workspace":
+    case "openFiles":
+    case "currentFile":
+      return raw;
+    default:
+      return "workspace";
+  }
+}
+
+/** Collect the URI set to scan for a given mode. Pure-ish (depends on
+ *  the live editor state for `currentFile` / `openFiles`). For
+ *  `workspace`, delegates to `findFiles` with the standard exclude
+ *  glob so the result matches the v0.2 behaviour exactly.
+ */
+async function collectScanUris(
+  mode: ScanMode,
+  excludeGlob: string,
+): Promise<readonly vscode.Uri[]> {
+  switch (mode) {
+    case "workspace":
+      return await vscode.workspace.findFiles("**/*", excludeGlob);
+    case "openFiles": {
+      // textDocuments includes every doc the extension host knows
+      // about — open editors, plus a few transient items. Filter to
+      // file-scheme URIs so output/scratchpad/walk-through docs
+      // don't sneak in.
+      return vscode.workspace.textDocuments
+        .filter((d) => d.uri.scheme === "file")
+        .map((d) => d.uri);
+    }
+    case "currentFile": {
+      const active = vscode.window.activeTextEditor?.document;
+      if (active && active.uri.scheme === "file") return [active.uri];
+      return [];
+    }
+  }
+}
+
+/** Walk the workspace (or a subset, per `scanMode`), scan every
+ *  in-scope file, and update the tree.
+ */
 export async function rescanWorkspace(
   provider: ReferencesTreeProvider,
   getConfig: () => LoadedConfig | undefined,
@@ -342,7 +395,8 @@ export async function rescanWorkspace(
       ? `{${ignore.join(",")}}`
       : "{**/node_modules/**,**/target/**,**/.git/**,**/out/**,**/pkg/**}";
 
-  const uris = await vscode.workspace.findFiles("**/*", excludeGlob);
+  const mode = scanModeSetting();
+  const uris = await collectScanUris(mode, excludeGlob);
   const allRefs: EngineReference[] = [];
   for (const uri of uris) {
     try {
@@ -635,4 +689,62 @@ export async function copyReferencesAsMarkdownCommand(
     );
   }
   return markdown;
+}
+
+/** `coderef.references.setScanMode` command body. Pops a quick-pick
+ *  with the three modes, writes the choice to the workspace settings
+ *  (or global if there's no workspace), and triggers a rescan so the
+ *  tree reflects the new mode immediately. `api?` lets tests inject
+ *  mocks for the quick-pick + settings.update + rescan calls.
+ */
+export async function setScanModeCommand(
+  rescan: () => void | Promise<void>,
+  api: {
+    pickMode: () => Promise<ScanMode | undefined>;
+    setMode: (mode: ScanMode) => Promise<void>;
+    showInfo: (msg: string) => void;
+  } = {
+    pickMode: async () => {
+      const items: { label: string; description: string; mode: ScanMode }[] = [
+        {
+          label: "workspace",
+          description: "Scan every in-scope file (.gitignore + config ignore[] honoured)",
+          mode: "workspace",
+        },
+        {
+          label: "openFiles",
+          description: "Scan only files currently open as TextDocuments",
+          mode: "openFiles",
+        },
+        {
+          label: "currentFile",
+          description: "Scan only the active editor's file",
+          mode: "currentFile",
+        },
+      ];
+      const picked = await vscode.window.showQuickPick(items, {
+        placeHolder: "coderef: references scan mode",
+        ignoreFocusOut: false,
+      });
+      return picked?.mode;
+    },
+    setMode: async (mode) => {
+      const cfg = vscode.workspace.getConfiguration("coderef.references");
+      // Workspace settings take precedence if a workspace is open;
+      // otherwise fall back to user-global so the value still sticks.
+      const target =
+        vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0
+          ? vscode.ConfigurationTarget.Workspace
+          : vscode.ConfigurationTarget.Global;
+      await cfg.update("scanMode", mode, target);
+    },
+    showInfo: (msg) => void vscode.window.showInformationMessage(msg),
+  },
+): Promise<ScanMode | undefined> {
+  const picked = await api.pickMode();
+  if (!picked) return undefined; // user cancelled
+  await api.setMode(picked);
+  api.showInfo(`coderef: references scan mode → ${picked}`);
+  await rescan();
+  return picked;
 }

@@ -50,6 +50,17 @@
           "default": 1000,
           "minimum": 10,
           "description": "Cap on the number of nodes shown at any level of the references browser tree (per-category file list, per-file leaf list). Levels exceeding the cap are truncated with a placeholder; the doctor's references.tooManyNodes diagnostic surfaces the same condition. Lower values keep the tree responsive on huge repos."
+        },
+        "coderef.references.scanMode": {
+          "type": "string",
+          "default": "workspace",
+          "enum": ["workspace", "openFiles", "currentFile"],
+          "enumDescriptions": [
+            "Scan every in-scope file in the workspace (default).",
+            "Scan only files currently open as TextDocuments in the host.",
+            "Scan only the active editor's file."
+          ],
+          "description": "Determines which files the references browser scans on refresh. `workspace` honours .gitignore + the config `ignore[]`. `openFiles` / `currentFile` are fast modes for very large workspaces."
         }
       }
     },
@@ -76,6 +87,11 @@
         "title": "coderef: Export references as JSON",
         "category": "coderef",
         "icon": "$(save-as)"
+      },
+      {
+        "command": "coderef.references.setScanMode",
+        "title": "coderef: Set references scan mode (workspace / openFiles / currentFile)",
+        "category": "coderef"
       }
     ],
     "menus": {
