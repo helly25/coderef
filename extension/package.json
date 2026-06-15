@@ -58,6 +58,12 @@
         "title": "coderef: Refresh references browser",
         "category": "coderef",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "coderef.references.copyAsMarkdown",
+        "title": "coderef: Copy references as Markdown",
+        "category": "coderef",
+        "icon": "$(clippy)"
       }
     ],
     "menus": {
@@ -70,9 +76,14 @@
       ],
       "view/title": [
         {
+          "command": "coderef.references.copyAsMarkdown",
+          "when": "view == coderef.references",
+          "group": "navigation@1"
+        },
+        {
           "command": "coderef.references.refresh",
           "when": "view == coderef.references",
-          "group": "navigation"
+          "group": "navigation@2"
         }
       ]
     },

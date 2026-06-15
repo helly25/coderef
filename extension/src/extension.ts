@@ -20,7 +20,11 @@ import {
   CoderefHoverProvider,
 } from "./providers";
 import { ReferenceCache } from "./referenceCache";
-import { ReferencesTreeProvider, rescanWorkspace } from "./referencesView";
+import {
+  ReferencesTreeProvider,
+  copyReferencesAsMarkdownCommand,
+  rescanWorkspace,
+} from "./referencesView";
 import { engineVersion } from "./wasmEngine";
 
 let currentConfig: LoadedConfig | undefined;
@@ -79,6 +83,11 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand("coderef.references.refresh", () => {
       void rescanWorkspace(refsProvider, () => currentConfig);
+    }),
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand("coderef.references.copyAsMarkdown", () => {
+      void copyReferencesAsMarkdownCommand(refsProvider, () => currentConfig);
     }),
   );
   // Initial population.

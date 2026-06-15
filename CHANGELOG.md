@@ -9,6 +9,18 @@ versions follow [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **References-browser Copy-as-Markdown command** (DESIGN §14.7 v0.3
+  long tail). New `coderef.references.copyAsMarkdown` command shows
+  up as a clippy-icon button in the references-browser view title
+  bar. Click it (or run from the command palette) and the current
+  reference set lands in your clipboard as a category-grouped
+  Markdown document, suitable for pasting into a PR description, a
+  design doc, a ticket comment — anywhere the team is already
+  reading Markdown. Format: one section per category (display-order
+  sorted), each section subdivided per file, each file as a bullet
+  list of `path:line` — `[pattern] matched-text` → target lines.
+  Backticks in matched text are escaped so the inline-code spans
+  don't break.
 - **`commitMessage.requiredNeverFires` doctor diagnostic** (DESIGN
   §16.1.1). A pattern declared `scope.commitMessage: "required"`
   whose regex doesn't match any commit in the host-supplied corpus
