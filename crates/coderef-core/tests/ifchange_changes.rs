@@ -331,8 +331,13 @@ fn integration_shape_c_composable_id_groups_via_jira_pattern() {
     assert!(errors.is_empty(), "{errors:#?}");
     let cl = parse_unified_diff(diff);
     let resolver = |id: &str| coderef_core::ifchange::resolve_composable_id(&cfg, id);
-    let report =
-        coderef_core::ifchange::verify_changes_composable(&blocks, &errors, &cl, Some(&resolver));
+    let report = coderef_core::ifchange::verify_changes_composable(
+        &blocks,
+        &errors,
+        &cl,
+        Some(&resolver),
+        None,
+    );
     assert!(report.passed(), "{report:#?}");
     fs::remove_dir_all(&root).unwrap();
 }
@@ -372,8 +377,13 @@ fn integration_shape_c_one_peer_unchanged_emits_missing_peer() {
     let (blocks, errors) = scan_workspace_blocks(&root, &cfg).unwrap();
     let cl = parse_unified_diff(diff);
     let resolver = |id: &str| coderef_core::ifchange::resolve_composable_id(&cfg, id);
-    let report =
-        coderef_core::ifchange::verify_changes_composable(&blocks, &errors, &cl, Some(&resolver));
+    let report = coderef_core::ifchange::verify_changes_composable(
+        &blocks,
+        &errors,
+        &cl,
+        Some(&resolver),
+        None,
+    );
     assert_eq!(report.violations.len(), 1);
     assert_eq!(report.violations[0].kind, "missing-peer");
     fs::remove_dir_all(&root).unwrap();

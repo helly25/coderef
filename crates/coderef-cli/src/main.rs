@@ -938,6 +938,23 @@ fn cmd_changes(args: Vec<String>) -> ExitCode {
         }
     };
 
+    // 1b. Enumerate every workspace file for strict `{all}` glob
+    // checks (DESIGN §10.2). Walks the same `.gitignore` + config
+    // `ignore[]` surface as block-scanning so the universe stays
+    // consistent. A failed enumeration is non-fatal — `{all}` falls
+    // back to the lax v0.2 behaviour instead of bailing the whole
+    // verifier.
+    let workspace_files = match coderef_core::ifchange::enumerate_workspace_files(&root, &cfg) {
+        Ok(f) => Some(f),
+        Err(e) => {
+            eprintln!(
+                "coderef changes: workspace enumeration failed: {e}; \
+                 `{{all}}` globs will fall back to lax semantics for this run"
+            );
+            None
+        }
+    };
+
     // 2. Run git diff and parse it.
     let mut git = std::process::Command::new("git");
     git.arg("-C").arg(&root).arg("diff").arg("-U0");
@@ -974,6 +991,7 @@ fn cmd_changes(args: Vec<String>) -> ExitCode {
         &parse_errors,
         &changed,
         Some(&resolver),
+        workspace_files.as_deref(),
     );
 
     match report {

@@ -111,10 +111,13 @@ pub fn verify_changes(
         parse_errors,
         diff,
         None::<&dyn Fn(&str) -> Option<String>>,
+        None,
     )
 }
 
-/// Pass 3 with optional composable-id resolution (DESIGN §10.7).
+/// Pass 3 with optional composable-id resolution (DESIGN §10.7) and
+/// optional workspace-file listing for strict `{all}` glob semantics
+/// (DESIGN §10.2).
 ///
 /// When `resolver` is `Some`, every block's id is passed through it
 /// before being used as the Shape B group key — so
@@ -123,6 +126,13 @@ pub fn verify_changes(
 /// stable canonical form. When `resolver` returns `None` for an id
 /// (or when no resolver is supplied), the literal id text is used,
 /// keeping Shape B semantics unchanged.
+///
+/// When `workspace_files` is `Some`, glob targets carrying the
+/// `{all}` flag enforce strict semantics: every workspace file
+/// matching the glob must be touched by the diff. When `None`,
+/// `{all}` falls back to the permissive v0.2 "any-mode" behaviour
+/// so callers without a workspace enumeration on hand (e.g. the
+/// WASM in-editor path) keep working.
 #[must_use]
 #[allow(clippy::too_many_lines)] // pass 3 is naturally long; splitting hides flow
 pub fn verify_changes_composable<F>(
@@ -130,6 +140,7 @@ pub fn verify_changes_composable<F>(
     parse_errors: &[MarkerParseError],
     diff: &ChangedLines,
     resolver: Option<&F>,
+    workspace_files: Option<&[String]>,
 ) -> ChangesReport
 where
     F: Fn(&str) -> Option<String> + ?Sized,
@@ -205,24 +216,47 @@ where
                         .is_some_and(|&(start, end)| diff.intersects(path, start, end))
                 }
                 // Glob target: `/path/*.md{any|all|soft}`. Match the
-                // pattern against the diff's changed-file list.
+                // pattern against the diff's changed-file list (and,
+                // for strict `{all}`, against the full workspace).
                 Target::FileGlob { pattern, flags } => {
                     let stripped = pattern.trim_start_matches('/');
                     let glob_result = globset::Glob::new(stripped);
                     if let Ok(glob) = glob_result {
                         let matcher = glob.compile_matcher();
                         let touched = diff.files();
-                        let matched_count = touched.iter().filter(|f| matcher.is_match(f)).count();
+                        let matched_in_diff =
+                            touched.iter().filter(|f| matcher.is_match(f)).count();
                         match flags.mode {
                             // `any`: at least one matched-and-changed.
-                            // `all` v0.2 semantics: same as `any` — the
-                            // strict "every workspace file matching
-                            // the glob must change" form needs a full
-                            // workspace enumeration that the verifier
-                            // doesn't have at this layer. Tracked as
-                            // a follow-up in DESIGN §10.2.
-                            super::parse::GlobMode::Any | super::parse::GlobMode::All => {
-                                matched_count > 0
+                            super::parse::GlobMode::Any => matched_in_diff > 0,
+                            super::parse::GlobMode::All => {
+                                match workspace_files {
+                                    // Strict semantics: every workspace
+                                    // file matching the glob must be in
+                                    // the diff. Vacuous-pass when zero
+                                    // workspace files match (the glob
+                                    // is stale — a separate doctor
+                                    // check could surface that).
+                                    Some(ws) => {
+                                        let mut all_changed = true;
+                                        let mut had_match = false;
+                                        for f in ws {
+                                            if matcher.is_match(f.as_str()) {
+                                                had_match = true;
+                                                if !diff.file_touched(f.as_str()) {
+                                                    all_changed = false;
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                        !had_match || all_changed
+                                    }
+                                    // Lax v0.2 fallback when no
+                                    // workspace listing was provided
+                                    // (in-editor WASM path, isolated
+                                    // unit tests). Same as `any`.
+                                    None => matched_in_diff > 0,
+                                }
                             }
                         }
                     } else {
@@ -632,7 +666,7 @@ mod tests {
         };
         // Both blocks change → both peers in the group → passes.
         let cl = ChangedLines::from_pairs(&[("a.rs", &[(2, 2)]), ("b.rs", &[(12, 12)])]);
-        let r = verify_changes_composable(&[b1, b2], &[], &cl, Some(&resolver));
+        let r = verify_changes_composable(&[b1, b2], &[], &cl, Some(&resolver), None);
         assert!(r.passed(), "{r:#?}");
     }
 
@@ -649,7 +683,7 @@ mod tests {
         };
         // Only a.rs changes; b.rs unchanged → peer violation.
         let cl = ChangedLines::from_pairs(&[("a.rs", &[(2, 2)])]);
-        let r = verify_changes_composable(&[b1, b2], &[], &cl, Some(&resolver));
+        let r = verify_changes_composable(&[b1, b2], &[], &cl, Some(&resolver), None);
         assert_eq!(r.violations.len(), 1);
         assert_eq!(r.violations[0].kind, "missing-peer");
     }
@@ -662,7 +696,7 @@ mod tests {
         let b2 = block("b.rs", 10, 15, Some("beta"), vec![]);
         let resolver = |_: &str| None;
         let cl = ChangedLines::from_pairs(&[("a.rs", &[(2, 2)])]);
-        let r = verify_changes_composable(&[b1, b2], &[], &cl, Some(&resolver));
+        let r = verify_changes_composable(&[b1, b2], &[], &cl, Some(&resolver), None);
         // No groups, no peer requirement → passes.
         assert!(r.passed(), "{r:#?}");
     }
@@ -876,5 +910,143 @@ mod tests {
         assert_eq!(r.violations.len(), 1);
         assert_eq!(r.violations[0].kind, "missing-peer");
         assert_eq!(r.violations[0].severity, Severity::Error);
+    }
+
+    // -----------------------------------------------------------------
+    // Strict `{all}` glob semantics (DESIGN §10.2). When the caller
+    // hands the verifier a workspace-file listing via the
+    // `workspace_files` parameter, `{all}` requires *every* file
+    // matching the glob to be in the diff — not just at least one.
+    // When `workspace_files` is `None`, `{all}` keeps the lax v0.2
+    // any-mode behaviour for backward compatibility.
+    // -----------------------------------------------------------------
+
+    fn glob_all_target(pattern: &str) -> Target {
+        Target::FileGlob {
+            pattern: pattern.into(),
+            flags: super::super::parse::GlobFlags {
+                mode: super::super::parse::GlobMode::All,
+                soft: false,
+            },
+        }
+    }
+
+    fn block_with_target(targets: Vec<Target>) -> IfChangeBlock {
+        IfChangeBlock {
+            file: "src/a.rs".into(),
+            line_start: 1,
+            line_end: 3,
+            id: None,
+            targets,
+            no_verify_reason: None,
+        }
+    }
+
+    #[test]
+    fn test_strict_all_glob_every_match_must_change() {
+        let b = block_with_target(vec![glob_all_target("/docs/*.md")]);
+        // a.rs changed; only one of the two /docs/*.md files changed.
+        let cl = ChangedLines::from_pairs(&[("src/a.rs", &[(2, 2)]), ("docs/a.md", &[(1, 1)])]);
+        let ws = vec![
+            "src/a.rs".to_string(),
+            "docs/a.md".to_string(),
+            "docs/b.md".to_string(),
+        ];
+        let r = verify_changes_composable(
+            &[b],
+            &[],
+            &cl,
+            None::<&dyn Fn(&str) -> Option<String>>,
+            Some(&ws),
+        );
+        assert_eq!(r.violations.len(), 1, "{:#?}", r.violations);
+        assert_eq!(r.violations[0].kind, "missing-target");
+        assert!(!r.passed());
+    }
+
+    #[test]
+    fn test_strict_all_glob_all_matches_changed_passes() {
+        let b = block_with_target(vec![glob_all_target("/docs/*.md")]);
+        // Every /docs/*.md file in the workspace was touched.
+        let cl = ChangedLines::from_pairs(&[
+            ("src/a.rs", &[(2, 2)]),
+            ("docs/a.md", &[(1, 1)]),
+            ("docs/b.md", &[(1, 1)]),
+        ]);
+        let ws = vec![
+            "src/a.rs".to_string(),
+            "docs/a.md".to_string(),
+            "docs/b.md".to_string(),
+        ];
+        let r = verify_changes_composable(
+            &[b],
+            &[],
+            &cl,
+            None::<&dyn Fn(&str) -> Option<String>>,
+            Some(&ws),
+        );
+        assert!(r.violations.is_empty(), "{:#?}", r.violations);
+        assert!(r.passed());
+    }
+
+    #[test]
+    fn test_strict_all_glob_zero_matches_is_vacuous_pass() {
+        // The glob matches no workspace files; strict {all} is
+        // vacuously satisfied. (A stale-glob doctor check would be
+        // the right surface for surfacing this, not a coupled-change
+        // violation.)
+        let b = block_with_target(vec![glob_all_target("/docs/*.md")]);
+        let cl = ChangedLines::from_pairs(&[("src/a.rs", &[(2, 2)])]);
+        let ws = vec!["src/a.rs".to_string()]; // no .md files
+        let r = verify_changes_composable(
+            &[b],
+            &[],
+            &cl,
+            None::<&dyn Fn(&str) -> Option<String>>,
+            Some(&ws),
+        );
+        assert!(r.violations.is_empty(), "{:#?}", r.violations);
+        assert!(r.passed());
+    }
+
+    #[test]
+    fn test_all_glob_without_workspace_falls_back_to_lax() {
+        // When workspace_files is None, `{all}` should NOT enforce
+        // strict semantics — it falls back to the v0.2 any-mode
+        // behaviour. This preserves the WASM/in-editor path and any
+        // caller that doesn't have a workspace handy.
+        let b = block_with_target(vec![glob_all_target("/docs/*.md")]);
+        // One matched file changed; that's enough for lax mode even
+        // though the workspace has unchanged matches we can't see.
+        let cl = ChangedLines::from_pairs(&[("src/a.rs", &[(2, 2)]), ("docs/a.md", &[(1, 1)])]);
+        let r = verify_changes(&[b], &[], &cl);
+        assert!(r.violations.is_empty(), "{:#?}", r.violations);
+        assert!(r.passed());
+    }
+
+    #[test]
+    fn test_strict_all_soft_glob_emits_warning_not_error() {
+        // Combined `{all,soft}`: strict-all match check + warning
+        // severity on miss. The violation surfaces, but `passed()`
+        // returns true so the run exits 0.
+        let b = block_with_target(vec![Target::FileGlob {
+            pattern: "/docs/*.md".into(),
+            flags: super::super::parse::GlobFlags {
+                mode: super::super::parse::GlobMode::All,
+                soft: true,
+            },
+        }]);
+        let cl = ChangedLines::from_pairs(&[("src/a.rs", &[(2, 2)])]);
+        let ws = vec!["src/a.rs".to_string(), "docs/a.md".to_string()]; // a.md exists, unchanged
+        let r = verify_changes_composable(
+            &[b],
+            &[],
+            &cl,
+            None::<&dyn Fn(&str) -> Option<String>>,
+            Some(&ws),
+        );
+        assert_eq!(r.violations.len(), 1, "{:#?}", r.violations);
+        assert_eq!(r.violations[0].severity, Severity::Warning);
+        assert!(r.passed(), "soft+all warning must not fail the run");
     }
 }
