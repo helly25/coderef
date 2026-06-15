@@ -235,6 +235,59 @@ test("serializeReferencesForExport falls back to kind-inferred category when con
   assert.equal(doc.references[0]!.category, "files");
 });
 
+// ---------------------------------------------------------------------
+// setScanModeCommand — quick-pick + settings.update + rescan. Uses
+// the injectable `api` parameter so we exercise the pure choreography
+// without the VSCode runtime.
+// ---------------------------------------------------------------------
+
+test("setScanModeCommand updates the setting and triggers a rescan when a mode is picked", async () => {
+  let rescanCalled = 0;
+  let updated: string | undefined;
+  let info: string | undefined;
+  const result = await referencesView.setScanModeCommand(
+    () => {
+      rescanCalled += 1;
+    },
+    {
+      pickMode: async () => "openFiles",
+      setMode: async (m) => {
+        updated = m;
+      },
+      showInfo: (msg) => {
+        info = msg;
+      },
+    },
+  );
+  assert.equal(result, "openFiles");
+  assert.equal(updated, "openFiles");
+  assert.equal(rescanCalled, 1);
+  assert.match(info ?? "", /openFiles/);
+});
+
+test("setScanModeCommand returns undefined and skips update when the user cancels", async () => {
+  let rescanCalled = 0;
+  let updated: string | undefined;
+  const result = await referencesView.setScanModeCommand(
+    () => {
+      rescanCalled += 1;
+    },
+    {
+      pickMode: async () => undefined, // user dismissed the quick-pick
+      setMode: async (m) => {
+        updated = m;
+      },
+      showInfo: (_msg) => {
+        // shouldn't be called
+        throw new Error("showInfo should not be called on cancel");
+      },
+    },
+  );
+  assert.equal(result, undefined);
+  assert.equal(updated, undefined, "settings.update must not be called on cancel");
+  assert.equal(rescanCalled, 0, "rescan must not be triggered on cancel");
+});
+
 test("renderReferencesAsMarkdown sorts refs within a file by byte_start", () => {
   const refs = [
     r({ file: "a.rs", byte_start: 200, line: 20 }),
