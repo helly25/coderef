@@ -9,6 +9,17 @@ versions follow [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **References-browser exportJson command** (DESIGN §14.7 v0.3 long
+  tail). New `coderef.references.exportJson` command pops a save
+  dialog and writes the current reference set to disk as a stable
+  schema-versioned JSON document. Schema `1` includes a header
+  (generated_at, engine version, totals) plus one entry per
+  reference with its resolved category baked in, so downstream
+  tooling can group/filter without re-reading the config. Entries
+  are sorted by `(file, byte_start)` so the output is diffable
+  across runs. Surfaced as a save-as-icon button in the
+  references-browser view title bar (between the Copy-as-Markdown
+  and Refresh icons).
 - **References-browser Copy-as-Markdown command** (DESIGN §14.7 v0.3
   long tail). New `coderef.references.copyAsMarkdown` command shows
   up as a clippy-icon button in the references-browser view title

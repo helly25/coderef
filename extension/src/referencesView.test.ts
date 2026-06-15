@@ -188,6 +188,53 @@ test("renderReferencesAsMarkdown handles a single reference cleanly (singular gr
   assert.match(md, /1 reference across 1 file in 1 category/);
 });
 
+// ---------------------------------------------------------------------
+// serializeReferencesForExport — JSON export schema.
+// ---------------------------------------------------------------------
+
+test("serializeReferencesForExport produces a stable schema 1 envelope", () => {
+  const refs = [r({})];
+  const fixed = new Date("2026-06-15T12:00:00Z");
+  const doc = referencesView.serializeReferencesForExport(refs, undefined, "coderef-core 0.3.0", fixed);
+  assert.equal(doc.schema, 1);
+  assert.equal(doc.engine, "coderef-core 0.3.0");
+  assert.equal(doc.generated_at, "2026-06-15T12:00:00.000Z");
+  assert.equal(doc.totals.references, 1);
+  assert.equal(doc.totals.files, 1);
+  assert.equal(doc.totals.categories, 1);
+  assert.equal(doc.references.length, 1);
+});
+
+test("serializeReferencesForExport sorts entries by file then byte_start", () => {
+  const refs = [
+    r({ file: "b.rs", byte_start: 50 }),
+    r({ file: "a.rs", byte_start: 200 }),
+    r({ file: "a.rs", byte_start: 100 }),
+  ];
+  const doc = referencesView.serializeReferencesForExport(refs, undefined, "x");
+  const order = doc.references.map((r) => `${r.file}:${r.byte_start}`);
+  assert.deepEqual(order, ["a.rs:100", "a.rs:200", "b.rs:50"]);
+});
+
+test("serializeReferencesForExport includes the resolved category per entry", () => {
+  const refs = [
+    r({ pattern_id: "todo", file: "a.rs" }),
+    r({ pattern_id: "jira", file: "b.rs" }),
+  ];
+  const c = cfg({ todo: { category: "people" }, jira: { category: "tickets" } });
+  const doc = referencesView.serializeReferencesForExport(refs, c, "x");
+  const cats = new Map(doc.references.map((r) => [r.file, r.category]));
+  assert.equal(cats.get("a.rs"), "people");
+  assert.equal(cats.get("b.rs"), "tickets");
+  assert.equal(doc.totals.categories, 2);
+});
+
+test("serializeReferencesForExport falls back to kind-inferred category when config missing", () => {
+  const refs = [r({ pattern_id: "anonymous", pattern_kind: "local" })];
+  const doc = referencesView.serializeReferencesForExport(refs, undefined, "x");
+  assert.equal(doc.references[0]!.category, "files");
+});
+
 test("renderReferencesAsMarkdown sorts refs within a file by byte_start", () => {
   const refs = [
     r({ file: "a.rs", byte_start: 200, line: 20 }),

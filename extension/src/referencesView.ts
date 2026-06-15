@@ -14,13 +14,15 @@
 // Deferred to v0.3 (DESIGN.md §14.7 longer tail):
 //   - Scan modes (workspace / openFiles / currentFile selector)
 //   - Mine / Unverified / Drifted filters
-//   - Multi-target hover alternates, exportJson
+//   - Multi-target hover alternates
 //   - references.tooManyNodes / uncategorisedSpike doctor checks
 //   - maxNodesPerLevel cap
 //
 // Shipped in v0.3:
 //   - Copy-as-Markdown command (this file: getAllRefs +
 //     renderReferencesAsMarkdown).
+//   - exportJson command (this file: serializeReferencesForExport +
+//     exportReferencesAsJsonCommand).
 
 import * as path from "node:path";
 
@@ -395,6 +397,161 @@ export function renderReferencesAsMarkdown(
 
 function escapeBackticks(s: string): string {
   return s.replace(/`/g, "\\`");
+}
+
+/** Shape of the JSON document emitted by `exportJson`. A stable
+ *  schema — downstream tooling (dashboards, audits, scripts) can rely
+ *  on the field names below across coderef releases. New fields will
+ *  be additive (no breaking changes within `schema: 1`).
+ */
+export interface ExportedReferences {
+  /** Schema version. Bumps on breaking shape changes. */
+  schema: 1;
+  /** ISO-8601 UTC timestamp at export time. */
+  generated_at: string;
+  /** Engine version (`coderef-core <X.Y.Z>`) snapshotted at export
+   *  time so an audit trail records exactly which engine produced
+   *  the dump. */
+  engine: string;
+  /** Totals for a quick at-a-glance summary at the top of the file.
+   *  Per-file / per-category counts are derivable from `references`. */
+  totals: {
+    references: number;
+    files: number;
+    categories: number;
+  };
+  references: ExportedReference[];
+}
+
+/** A single reference entry in the exported JSON. Mirrors
+ *  `EngineReference` plus the resolved category for one-shot
+ *  grouping downstream without needing the config.
+ */
+export interface ExportedReference {
+  pattern_id: string;
+  pattern_kind: string;
+  category: string;
+  file: string;
+  line: number;
+  column: number;
+  byte_start: number;
+  byte_end: number;
+  matched_text: string;
+  captures: Record<string, string>;
+  target: string;
+  title: string | null;
+  in_comment: boolean;
+}
+
+/** Serialise a reference set into the stable `ExportedReferences`
+ *  shape. Pure function — testable without VSCode. Used by the
+ *  exportJson command and any future downstream exporter.
+ */
+export function serializeReferencesForExport(
+  refs: EngineReference[],
+  config: LoadedConfig | undefined,
+  engine: string,
+  now: Date = new Date(),
+): ExportedReferences {
+  const fileSet = new Set<string>();
+  const catSet = new Set<string>();
+  const entries: ExportedReference[] = refs.map((r) => {
+    fileSet.add(r.file);
+    const cat = categoryOf(r, config);
+    catSet.add(cat);
+    return {
+      pattern_id: r.pattern_id,
+      pattern_kind: r.pattern_kind,
+      category: cat,
+      file: r.file,
+      line: r.line,
+      column: r.column,
+      byte_start: r.byte_start,
+      byte_end: r.byte_end,
+      matched_text: r.matched_text,
+      captures: r.captures,
+      target: r.target,
+      title: r.title,
+      in_comment: r.in_comment,
+    };
+  });
+  // Sort entries deterministically so the JSON output is diffable
+  // across runs (file, then byte_start).
+  entries.sort((a, b) => {
+    if (a.file !== b.file) return a.file.localeCompare(b.file);
+    return a.byte_start - b.byte_start;
+  });
+  return {
+    schema: 1,
+    generated_at: now.toISOString(),
+    engine,
+    totals: {
+      references: entries.length,
+      files: fileSet.size,
+      categories: catSet.size,
+    },
+    references: entries,
+  };
+}
+
+/** `coderef.references.exportJson` command body. Asks the user to
+ *  pick an output file, serialises the current reference set, and
+ *  writes the JSON document. Surfaced both via the command palette
+ *  and a save-icon button in the view title bar.
+ *
+ *  The `api?` parameter mirrors `copyReferencesAsMarkdownCommand`:
+ *  defaults to live `vscode.window.showSaveDialog` / fs writes /
+ *  `vscode.window.showInformationMessage`, but accepts mocks for
+ *  tests so the pure path is exercisable without a VSCode runtime.
+ */
+export async function exportReferencesAsJsonCommand(
+  provider: ReferencesTreeProvider,
+  getConfig: () => LoadedConfig | undefined,
+  engine: string,
+  api: {
+    pickPath: () => Promise<vscode.Uri | undefined>;
+    writeFile: (uri: vscode.Uri, content: Uint8Array) => Promise<void>;
+    showInfo: (msg: string) => void;
+    showWarn: (msg: string) => void;
+  } = {
+    pickPath: async () =>
+      await vscode.window.showSaveDialog({
+        defaultUri: defaultExportUri(),
+        filters: { JSON: ["json"] },
+        saveLabel: "Export references",
+      }),
+    writeFile: async (uri, content) => {
+      await vscode.workspace.fs.writeFile(uri, content);
+    },
+    showInfo: (msg) => void vscode.window.showInformationMessage(msg),
+    showWarn: (msg) => void vscode.window.showWarningMessage(msg),
+  },
+): Promise<vscode.Uri | undefined> {
+  const refs = provider.getAllRefs();
+  if (refs.length === 0) {
+    api.showWarn(
+      "coderef: no references in the current scan — nothing to export. Refresh first.",
+    );
+    return undefined;
+  }
+  const target = await api.pickPath();
+  if (!target) {
+    // User cancelled the save dialog — silent (no notification).
+    return undefined;
+  }
+  const doc = serializeReferencesForExport(refs, getConfig(), engine);
+  const text = JSON.stringify(doc, null, 2);
+  await api.writeFile(target, new TextEncoder().encode(text));
+  api.showInfo(
+    `coderef: exported ${refs.length} reference${refs.length === 1 ? "" : "s"} to ${target.fsPath}`,
+  );
+  return target;
+}
+
+function defaultExportUri(): vscode.Uri | undefined {
+  const folder = vscode.workspace.workspaceFolders?.[0];
+  if (!folder) return undefined;
+  return vscode.Uri.joinPath(folder.uri, "coderef-references.json");
 }
 
 /** `coderef.references.copyAsMarkdown` command body. Pulls the current
