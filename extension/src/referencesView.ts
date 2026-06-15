@@ -23,6 +23,8 @@
 //     renderReferencesAsMarkdown).
 //   - exportJson command (this file: serializeReferencesForExport +
 //     exportReferencesAsJsonCommand).
+//   - maxNodesPerLevel cap (this file: capLevel + TruncatedNode),
+//     wired to the `coderef.references.maxNodesPerLevel` setting.
 
 import * as path from "node:path";
 
@@ -94,6 +96,59 @@ function glyphOf(category: string): string {
   return USER_DEFINED_GLYPH;
 }
 
+/** Default cap for nodes per tree level. Mirrors DESIGN §14.7.3.
+ *  Overridable via the `coderef.references.maxNodesPerLevel` setting.
+ *  When a level exceeds the cap, the tree shows the first N entries
+ *  and appends a truncation placeholder; the doctor's
+ *  `references.tooManyNodes` diagnostic surfaces the same condition
+ *  ahead of viewing the tree.
+ */
+const DEFAULT_MAX_NODES_PER_LEVEL = 1000;
+
+/** Read `coderef.references.maxNodesPerLevel` honouring overrides
+ *  and falling back to {@link DEFAULT_MAX_NODES_PER_LEVEL}. Capped
+ *  at the minimum of 10 so a hostile-low setting still leaves room
+ *  for the truncation placeholder.
+ */
+function maxNodesPerLevelSetting(): number {
+  const cfg = vscode.workspace.getConfiguration("coderef.references");
+  const raw = cfg.get<number>("maxNodesPerLevel", DEFAULT_MAX_NODES_PER_LEVEL);
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 10) {
+    return DEFAULT_MAX_NODES_PER_LEVEL;
+  }
+  return Math.floor(raw);
+}
+
+/** Truncation placeholder shown at a level the cap clipped. Pure
+ *  presentational — clicking it does nothing.
+ */
+class TruncatedNode extends vscode.TreeItem {
+  constructor(hidden: number, cap: number) {
+    super(
+      `…and ${hidden} more (cap: ${cap}, set \`coderef.references.maxNodesPerLevel\` to raise)`,
+      vscode.TreeItemCollapsibleState.None,
+    );
+    this.iconPath = new vscode.ThemeIcon("ellipsis");
+    this.contextValue = "coderef.references.truncated";
+  }
+}
+
+/** Cap an array at `max` entries; when truncated, returns the
+ *  prefix plus a `TruncatedNode` describing the hidden count.
+ *  Pure (excepting the TreeItem subtype) so it's testable.
+ */
+export function capLevel<T>(items: T[], render: (t: T) => Node, max: number): Node[] {
+  if (items.length <= max) return items.map(render);
+  const kept = items.slice(0, max).map(render);
+  kept.push(new TruncatedNode(items.length - max, max));
+  return kept;
+}
+
+/** Exported for tests. */
+export function _maxNodesPerLevelSettingForTests(): number {
+  return maxNodesPerLevelSetting();
+}
+
 /** One leaf in the tree. */
 class ReferenceLeaf extends vscode.TreeItem {
   constructor(
@@ -152,7 +207,7 @@ class CategoryNode extends vscode.TreeItem {
   }
 }
 
-type Node = CategoryNode | FileNode | ReferenceLeaf;
+type Node = CategoryNode | FileNode | ReferenceLeaf | TruncatedNode;
 
 /** Public for unit testing — pure function over a Reference[] + config. */
 export function buildTree(
@@ -241,24 +296,22 @@ export class ReferencesTreeProvider implements vscode.TreeDataProvider<Node> {
 
   getChildren(element?: Node): Node[] {
     if (!element) return this.roots;
+    const cap = maxNodesPerLevelSetting();
     if (element instanceof CategoryNode) {
       if (!this.index) return [];
       const folder = this.index.workspaceFolderUri;
       const byFile = this.index.byCategory.get(element.category);
       if (!byFile) return [];
-      const files: FileNode[] = [];
-      for (const [file, refs] of byFile) {
-        const uri = vscode.Uri.joinPath(folder, file);
-        files.push(new FileNode(file, uri, refs));
-      }
-      files.sort((a, b) => a.file.localeCompare(b.file));
-      return files;
+      const entries = [...byFile.entries()].sort(([a], [b]) => a.localeCompare(b));
+      return capLevel(
+        entries,
+        ([file, refs]) => new FileNode(file, vscode.Uri.joinPath(folder, file), refs),
+        cap,
+      );
     }
     if (element instanceof FileNode) {
-      return element.refs
-        .slice()
-        .sort((a, b) => a.byte_start - b.byte_start)
-        .map((r) => new ReferenceLeaf(r, element.fileUri));
+      const ordered = element.refs.slice().sort((a, b) => a.byte_start - b.byte_start);
+      return capLevel(ordered, (r) => new ReferenceLeaf(r, element.fileUri), cap);
     }
     return [];
   }

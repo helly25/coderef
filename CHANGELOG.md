@@ -9,6 +9,15 @@ versions follow [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`coderef.references.maxNodesPerLevel` setting + tree truncation
+  placeholder** (DESIGN §14.7.3). The references browser now honours
+  a per-workspace cap (default `1000`, min `10`) on the number of
+  nodes shown at any level — per-category file list, per-file leaf
+  list. Levels exceeding the cap render the first N entries and an
+  ellipsis-icon `…and X more (cap: N, set
+  coderef.references.maxNodesPerLevel to raise)` placeholder. Pairs
+  with the `references.tooManyNodes` doctor diagnostic (also v0.3)
+  so very large levels are flagged ahead of viewing the tree.
 - **`references.tooManyNodes` + `references.uncategorisedSpike`
   doctor diagnostics** (DESIGN §14.7.3). Two new scan-dependent
   Info-severity checks for the references-browser tree.
