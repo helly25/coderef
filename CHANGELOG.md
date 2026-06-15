@@ -7,6 +7,22 @@ versions follow [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+### Added
+
+- **Multi-target hover alternates** in the VSCode extension's
+  `HoverProvider` (DESIGN §14.7). When hovering a reference the
+  popover now lists every *other* pattern that would also match the
+  same `matched_text`, with the alternate's resolved target as a
+  clickable link. Useful when one token is interpretable several
+  ways — e.g. a JIRA id matched both by a `jira` pattern (linking
+  to the tracker) and a generic ticket pattern (linking to a
+  dashboard). The primary target stays at the top of the popover
+  (driven by pattern priority via the cache); alternates appear
+  below in an `Alternative targets (N):` section.
+- `buildHoverMarkdown` (the pure renderer) gained an `alternates`
+  parameter — backward-compatible (defaults to `[]`), so callers
+  that don't pass it see the same v0.2 single-target hover.
+
 ## v0.3.0 — 2026-06-15
 
 ### Highlights

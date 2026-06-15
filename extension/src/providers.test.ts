@@ -129,3 +129,79 @@ test("buildHoverMarkdown omits description and title when neither is set", () =>
   assert.match(value, /`x`/);
   assert.match(value, /→/);
 });
+
+// ---------------------------------------------------------------------
+// buildHoverMarkdown — multi-target alternates (v0.4 long tail).
+// ---------------------------------------------------------------------
+
+test("buildHoverMarkdown omits the alternates section when none are passed", () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const vscode = require("vscode");
+  const md = providers.buildHoverMarkdown(r({}), undefined, vscode.Uri.parse("https://a/"), []);
+  const value: string = (md as { value: string }).value;
+  assert.doesNotMatch(value, /Alternative target/);
+});
+
+test("buildHoverMarkdown lists each alternate target with its kind, link, and optional title", () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const vscode = require("vscode");
+  const primary = vscode.Uri.parse("https://primary.example/A");
+  const md = providers.buildHoverMarkdown(
+    r({ pattern_id: "primary", pattern_kind: "url", target: "https://primary.example/A" }),
+    undefined,
+    primary,
+    [
+      {
+        pattern_id: "alt-jira",
+        pattern_kind: "url",
+        target: "https://jira.example/A",
+        uri: vscode.Uri.parse("https://jira.example/A"),
+        title: "JIRA ticket A",
+      },
+      {
+        pattern_id: "alt-github",
+        pattern_kind: "url",
+        target: "https://github.com/issues/A",
+        uri: vscode.Uri.parse("https://github.com/issues/A"),
+        title: null,
+      },
+    ],
+  );
+  const value: string = (md as { value: string }).value;
+  // Section header pluralisation: 2 alternates → "Alternative targets (2):".
+  assert.match(value, /\*\*Alternative targets \(2\):\*\*/);
+  // Each alternate appears as a bullet with pattern id + link. The
+  // visible-text portion of the link goes through escapeMarkdown so
+  // dots are escaped (`jira\.example/A`); the URL in `(...)` stays
+  // unescaped. Match on the inner-link URL since it's the
+  // reformatting-stable bit.
+  assert.match(value, /`alt-jira` \(url\) → .*?\]\(https:\/\/jira\.example\/A\)/);
+  assert.match(value, /`alt-github` \(url\) → .*?\]\(https:\/\/github\.com\/issues\/A\)/);
+  // Title shows on the alt that has one; not on the one without.
+  assert.match(value, /JIRA ticket A/);
+  // Primary still rendered above.
+  assert.match(value, /`primary`/);
+});
+
+test("buildHoverMarkdown uses singular grammar when exactly one alternate is present", () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const vscode = require("vscode");
+  const md = providers.buildHoverMarkdown(
+    r({}),
+    undefined,
+    vscode.Uri.parse("https://a/"),
+    [
+      {
+        pattern_id: "alt-only",
+        pattern_kind: "url",
+        target: "https://b/",
+        uri: vscode.Uri.parse("https://b/"),
+        title: null,
+      },
+    ],
+  );
+  const value: string = (md as { value: string }).value;
+  // Singular header (no parenthetical count for a single alt).
+  assert.match(value, /\*\*Alternative target:\*\*/);
+  assert.doesNotMatch(value, /Alternative target \(/);
+});
