@@ -1,6 +1,6 @@
 {
   "name": "@helly25/coderef",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "npm wrapper for the coderef CLI — downloads the right platform binary on install",
   "keywords": [
     "coderef",

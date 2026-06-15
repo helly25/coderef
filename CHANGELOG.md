@@ -7,6 +7,41 @@ versions follow [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+## v0.3.0 — 2026-06-15
+
+### Highlights
+
+- **IfChange/ThenChange v0.3 surface complete**: `Label('name') ...
+  EndLabel` compat-form markers (#54), `{soft}` glob flag (#55),
+  strict `{all}` glob semantics with workspace enumeration (#56),
+  three new `label.*` doctor diagnostics (#57).
+- **New doctor diagnostics**: `commitMessage.requiredNeverFires`
+  (#58, with `git log` corpus plumbed from the CLI),
+  `references.tooManyNodes` + `references.uncategorisedSpike`
+  (#61).
+- **References-browser polish**: Copy-as-Markdown (#59),
+  exportJson (#60), `coderef.references.maxNodesPerLevel` cap
+  with truncation placeholder (#62), `scanMode` setting +
+  `setScanMode` palette command (#63).
+
+### Workspace stats
+
+- Test count grew from ~352 → **~370** (Rust workspace) + 28 → 45
+  extension TS unit tests.
+- 6 PRs merged in this cycle (#54–#55, #56, #57, #58, #59, #60,
+  #61, #62, #63).
+
+### Deferred to v0.4
+
+- Per-pattern `patterns.<id>.label` config + `label.orphanOpen` /
+  `label.orphanClose` compat-only doctor diagnostics (DESIGN
+  §10.3). Needs a design decision on per-pattern file-scoping vs
+  workspace-wide opt-in before the parser refactor is justified.
+- References-browser Mine / Drifted filters (DESIGN §14.7). Mine
+  needs an identity source (git config vs config-listed
+  identifiers); Drifted needs verifier-output plumbing.
+- Multi-target hover alternates in the extension's HoverProvider.
+
 ### Added
 
 - **References-browser scan modes + setScanMode command** (DESIGN
