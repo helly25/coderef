@@ -25,6 +25,7 @@ import {
   copyReferencesAsMarkdownCommand,
   exportReferencesAsJsonCommand,
   rescanWorkspace,
+  setFilterCommand,
   setScanModeCommand,
 } from "./referencesView";
 import { engineVersion } from "./wasmEngine";
@@ -104,6 +105,11 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand("coderef.references.setScanMode", () => {
       void setScanModeCommand(() => triggerRescan());
+    }),
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand("coderef.references.setFilter", () => {
+      void setFilterCommand(() => triggerRescan());
     }),
   );
   // Initial population.

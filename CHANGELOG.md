@@ -9,6 +9,17 @@ versions follow [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **References-browser Mine filter** (DESIGN §14.7 v0.3 deferred /
+  v0.4). New `coderef.references.filter` setting (`all` / `mine`,
+  default `all`) controls whether the tree shows every reference
+  or only those that match the user. Identity source is a workspace
+  array `coderef.references.mineIdentities`; a ref is "yours" if
+  its matched text or any capture value contains any listed
+  identifier (case-insensitive substring match). With an empty
+  `mineIdentities` array, Mine acts as a no-op (treats every ref
+  as yours) rather than emptying the tree — fewer foot-guns. New
+  `coderef.references.setFilter` palette command pops a quick-pick
+  and triggers an immediate rescan on selection.
 - **Multi-target hover alternates** in the VSCode extension's
   `HoverProvider` (DESIGN §14.7). When hovering a reference the
   popover now lists every *other* pattern that would also match the

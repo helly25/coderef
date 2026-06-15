@@ -51,6 +51,22 @@
           "minimum": 10,
           "description": "Cap on the number of nodes shown at any level of the references browser tree (per-category file list, per-file leaf list). Levels exceeding the cap are truncated with a placeholder; the doctor's references.tooManyNodes diagnostic surfaces the same condition. Lower values keep the tree responsive on huge repos."
         },
+        "coderef.references.filter": {
+          "type": "string",
+          "default": "all",
+          "enum": ["all", "mine"],
+          "enumDescriptions": [
+            "Show every reference in the tree (default).",
+            "Only show references whose matched text or capture values contain one of `coderef.references.mineIdentities` (case-insensitive substring match)."
+          ],
+          "description": "Active filter applied to the references browser tree. Switch via the `coderef: Set references filter` palette command."
+        },
+        "coderef.references.mineIdentities": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Identifiers (usernames, email-handles, etc.) used by the Mine filter to decide whether a reference is yours. Case-insensitive substring match against the matched text and each capture value. Leave empty to disable per-identifier filtering — Mine then treats every reference as yours."
+        },
         "coderef.references.scanMode": {
           "type": "string",
           "default": "workspace",
@@ -91,6 +107,11 @@
       {
         "command": "coderef.references.setScanMode",
         "title": "coderef: Set references scan mode (workspace / openFiles / currentFile)",
+        "category": "coderef"
+      },
+      {
+        "command": "coderef.references.setFilter",
+        "title": "coderef: Set references filter (all / mine)",
         "category": "coderef"
       }
     ],

@@ -236,6 +236,106 @@ test("serializeReferencesForExport falls back to kind-inferred category when con
 });
 
 // ---------------------------------------------------------------------
+// isReferenceMine — pure predicate behind the Mine filter.
+// ---------------------------------------------------------------------
+
+test("isReferenceMine returns true for every ref when identities is empty", () => {
+  // Unconfigured Mine treats every ref as yours — better UX than
+  // returning an empty tree.
+  const ref = r({ matched_text: "TODO(@alice)" });
+  assert.equal(referencesView.isReferenceMine(ref, []), true);
+});
+
+test("isReferenceMine matches matched_text case-insensitively", () => {
+  // ZZTOP-prefixed text so the workspace self-check's todo-user
+  // pattern doesn't try to resolve `@Alice` as a github user
+  // (would 404 in CI on a non-existent handle).
+  const ref = r({ matched_text: "ZZTOP-fixture", captures: { user: "Alice" } });
+  assert.equal(referencesView.isReferenceMine(ref, ["alice"]), true);
+  assert.equal(referencesView.isReferenceMine(ref, ["BOB"]), false);
+});
+
+test("isReferenceMine matches any capture value", () => {
+  // ZZTOP-prefixed string keeps the self-check happy.
+  const ref = r({
+    matched_text: "ZZTOP-bug-ref",
+    captures: { ticket: "PROJ-1", assignee: "alice" },
+  });
+  assert.equal(referencesView.isReferenceMine(ref, ["alice"]), true);
+});
+
+test("isReferenceMine returns true on substring match (not full equality)", () => {
+  // Use a matched_text shape the coderef self-check's `todo-user`
+  // pattern (`TODO\(@(?<user>\w+)\)`) intentionally doesn't match —
+  // no `@` prefix — so the self-scan doesn't try to resolve a
+  // fictional github user from these fixture strings.
+  const ref = r({ matched_text: "ZZTOP(test-fixture-string)", captures: {} });
+  // Identifier substring inside matched_text still matches.
+  assert.equal(referencesView.isReferenceMine(ref, ["fixture"]), true);
+  // A different substring also matches.
+  assert.equal(referencesView.isReferenceMine(ref, ["ZZTOP"]), true);
+});
+
+test("isReferenceMine OR-matches across multiple identities", () => {
+  // Override captures to clear the default `user: "alice"` so the
+  // negative-case identity list doesn't false-positive against it.
+  // ZZTOP prefix keeps the self-check happy (no github 404).
+  const ref = r({ matched_text: "ZZTOP-fixture-bob", captures: { user: "bob" } });
+  assert.equal(referencesView.isReferenceMine(ref, ["alice", "bob", "charlie"]), true);
+  assert.equal(referencesView.isReferenceMine(ref, ["alice", "charlie"]), false);
+});
+
+// ---------------------------------------------------------------------
+// setFilterCommand — quick-pick + settings.update + rescan.
+// ---------------------------------------------------------------------
+
+test("setFilterCommand updates the setting and triggers a rescan when a filter is picked", async () => {
+  let rescanCalled = 0;
+  let updated: string | undefined;
+  let info: string | undefined;
+  const result = await referencesView.setFilterCommand(
+    () => {
+      rescanCalled += 1;
+    },
+    {
+      pickFilter: async () => "mine",
+      setFilter: async (m) => {
+        updated = m;
+      },
+      showInfo: (msg) => {
+        info = msg;
+      },
+    },
+  );
+  assert.equal(result, "mine");
+  assert.equal(updated, "mine");
+  assert.equal(rescanCalled, 1);
+  assert.match(info ?? "", /mine/);
+});
+
+test("setFilterCommand returns undefined and skips update when the user cancels", async () => {
+  let rescanCalled = 0;
+  let updated: string | undefined;
+  const result = await referencesView.setFilterCommand(
+    () => {
+      rescanCalled += 1;
+    },
+    {
+      pickFilter: async () => undefined,
+      setFilter: async (m) => {
+        updated = m;
+      },
+      showInfo: (_msg) => {
+        throw new Error("showInfo should not be called on cancel");
+      },
+    },
+  );
+  assert.equal(result, undefined);
+  assert.equal(updated, undefined);
+  assert.equal(rescanCalled, 0);
+});
+
+// ---------------------------------------------------------------------
 // setScanModeCommand — quick-pick + settings.update + rescan. Uses
 // the injectable `api` parameter so we exercise the pure choreography
 // without the VSCode runtime.
