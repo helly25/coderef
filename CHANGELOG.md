@@ -9,6 +9,18 @@ versions follow [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`label.*` doctor diagnostics** (DESIGN §10.3). Three new
+  scan-dependent checks fire when at least one `kind: "ifchange"`
+  pattern is configured: `label.duplicateInFile` (Error — two labelled
+  regions in the same file share an id; resolution is
+  non-deterministic), `label.unused` (Info advisory — labelled region
+  with no peer block and no `ThenChange(path:label-name)` reference),
+  and `label.ambiguousName` (Error — name is purely numeric or matches
+  `N-M`, colliding with line/range parsing in `ThenChange(path:line)`
+  targets). The remaining DESIGN §10.3 diagnostics
+  (`label.orphanOpen`/`Close`) are explicitly compat-only and pair
+  with the per-pattern `patterns.<id>.label` config in a follow-up
+  PR.
 - **Strict `{all}` glob semantics** in `ThenChange` (DESIGN §10.2).
   `IfChange ... ThenChange(/docs/*.md{all})` now enforces that *every*
   workspace file matching the glob is touched by the diff, not just

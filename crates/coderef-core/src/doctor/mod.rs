@@ -163,13 +163,16 @@ pub fn run_doctor_with_workspace(
     self::checks::check_anchor_style_mismatch(config, &refs, root.as_ref(), &mut additions);
 
     // IfChange markers live in a separate index from regular
-    // references; scan them too so `coupled.composableTypo` has the
-    // right input.
+    // references; scan them too so `coupled.composableTypo` and the
+    // label.* family (DESIGN §10.3) have the right input.
     if crate::ifchange::ifchange_enabled(config) {
         if let Ok((blocks, _parse_errors)) =
             crate::ifchange::scan_workspace_blocks(root.as_ref(), config)
         {
             self::checks::check_coupled_composable_typo(config, &blocks, &mut additions);
+            self::checks::check_label_duplicate_in_file(config, &blocks, &mut additions);
+            self::checks::check_label_unused(config, &blocks, &mut additions);
+            self::checks::check_label_ambiguous_name(config, &blocks, &mut additions);
         }
     }
 

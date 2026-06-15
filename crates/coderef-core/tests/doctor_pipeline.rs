@@ -507,3 +507,180 @@ fn doctor_coupled_composable_typo_silent_when_id_resolves() {
         .any(|d| d.check == "coupled.composableTypo"));
     fs::remove_dir_all(&root).unwrap();
 }
+
+// ---------------------------------------------------------------------
+// label.* doctor diagnostics (DESIGN §10.3). All three are
+// scan-dependent and fire only when at least one `kind: "ifchange"`
+// pattern is configured (the `ifchange_enabled` gate).
+// ---------------------------------------------------------------------
+
+#[test]
+fn doctor_label_duplicate_in_file_fires_on_collision() {
+    // Two `IfChange('k')` blocks in the same file — `ThenChange(a.py:k)`
+    // would silently pick one. Flag as Error by default.
+    let root = tmpdir("label-dup");
+    write(
+        &root,
+        "a.py",
+        "# IfChange('k')\nx = 1\n# ThenChange\n# IfChange('k')\ny = 2\n# ThenChange\n",
+    );
+    let cfg = Config::from_jsonc_str(
+        r#"{ "patterns": { "ic": { "kind": "ifchange", "regex": "(unused)" } } }"#,
+    )
+    .unwrap();
+    let report = run_doctor_with_workspace(&root, &cfg).unwrap();
+    let dup = report
+        .diagnostics
+        .iter()
+        .find(|d| d.check == "label.duplicateInFile");
+    assert!(dup.is_some(), "got: {:#?}", report.diagnostics);
+    assert_eq!(
+        dup.unwrap().severity,
+        coderef_core::severity::Severity::Error
+    );
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn doctor_label_duplicate_works_across_ifchange_and_label_compat_forms() {
+    // Cross-form collision: one `IfChange('k')`, one `Label('k') ...
+    // EndLabel`. Should still fire — both produce IfChangeBlocks with
+    // id="k" in the same file.
+    let root = tmpdir("label-dup-cross");
+    write(
+        &root,
+        "a.py",
+        "# IfChange('k')\nx = 1\n# ThenChange\n# Label('k')\ny = 2\n# EndLabel\n",
+    );
+    let cfg = Config::from_jsonc_str(
+        r#"{ "patterns": { "ic": { "kind": "ifchange", "regex": "(unused)" } } }"#,
+    )
+    .unwrap();
+    let report = run_doctor_with_workspace(&root, &cfg).unwrap();
+    assert!(report
+        .diagnostics
+        .iter()
+        .any(|d| d.check == "label.duplicateInFile"));
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn doctor_label_unused_fires_when_no_thenchange_references_the_label() {
+    // A labelled block with no cross-file ThenChange(path:k) target
+    // and no peer block sharing id="k". Advisory severity (Info).
+    let root = tmpdir("label-unused");
+    write(&root, "a.py", "# Label('lonely')\nx = 1\n# EndLabel\n");
+    let cfg = Config::from_jsonc_str(
+        r#"{ "patterns": { "ic": { "kind": "ifchange", "regex": "(unused)" } } }"#,
+    )
+    .unwrap();
+    let report = run_doctor_with_workspace(&root, &cfg).unwrap();
+    let unused = report
+        .diagnostics
+        .iter()
+        .find(|d| d.check == "label.unused");
+    assert!(unused.is_some(), "got: {:#?}", report.diagnostics);
+    assert_eq!(
+        unused.unwrap().severity,
+        coderef_core::severity::Severity::Info
+    );
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn doctor_label_unused_silent_when_a_then_change_references_it() {
+    let root = tmpdir("label-used");
+    // a.py: defines label `lonely`. b.py: ThenChange targets it.
+    write(&root, "a.py", "# Label('lonely')\nx = 1\n# EndLabel\n");
+    write(
+        &root,
+        "b.py",
+        "# IfChange\ny = 2\n# ThenChange(a.py:lonely)\n",
+    );
+    let cfg = Config::from_jsonc_str(
+        r#"{ "patterns": { "ic": { "kind": "ifchange", "regex": "(unused)" } } }"#,
+    )
+    .unwrap();
+    let report = run_doctor_with_workspace(&root, &cfg).unwrap();
+    assert!(!report.diagnostics.iter().any(|d| d.check == "label.unused"));
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn doctor_label_unused_silent_when_peer_block_shares_id() {
+    // Shape B / C peer matching: two blocks in different files sharing
+    // id="k" form a peer group. Neither is "unused" even without a
+    // FileLabel reference.
+    let root = tmpdir("label-peer");
+    write(&root, "a.py", "# IfChange('k')\nx = 1\n# ThenChange\n");
+    write(&root, "b.py", "# IfChange('k')\ny = 2\n# ThenChange\n");
+    let cfg = Config::from_jsonc_str(
+        r#"{ "patterns": { "ic": { "kind": "ifchange", "regex": "(unused)" } } }"#,
+    )
+    .unwrap();
+    let report = run_doctor_with_workspace(&root, &cfg).unwrap();
+    assert!(!report.diagnostics.iter().any(|d| d.check == "label.unused"));
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn doctor_label_ambiguous_name_fires_on_pure_digits() {
+    // `Label('42')`-style names collide with line/range syntax in
+    // `ThenChange(path:N)` targets.
+    let root = tmpdir("label-ambig-n");
+    write(&root, "a.py", "# Label('42')\nx = 1\n# EndLabel\n");
+    let cfg = Config::from_jsonc_str(
+        r#"{ "patterns": { "ic": { "kind": "ifchange", "regex": "(unused)" } } }"#,
+    )
+    .unwrap();
+    let report = run_doctor_with_workspace(&root, &cfg).unwrap();
+    let ambig = report
+        .diagnostics
+        .iter()
+        .find(|d| d.check == "label.ambiguousName");
+    assert!(ambig.is_some(), "got: {:#?}", report.diagnostics);
+    assert_eq!(
+        ambig.unwrap().severity,
+        coderef_core::severity::Severity::Error
+    );
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn doctor_label_ambiguous_name_fires_on_range_form() {
+    // `Label('5-10')` collides with the `path:N-M` line-range form.
+    let root = tmpdir("label-ambig-range");
+    write(&root, "a.py", "# Label('5-10')\nx = 1\n# EndLabel\n");
+    let cfg = Config::from_jsonc_str(
+        r#"{ "patterns": { "ic": { "kind": "ifchange", "regex": "(unused)" } } }"#,
+    )
+    .unwrap();
+    let report = run_doctor_with_workspace(&root, &cfg).unwrap();
+    assert!(report
+        .diagnostics
+        .iter()
+        .any(|d| d.check == "label.ambiguousName"));
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn doctor_label_ambiguous_name_silent_on_alphanumeric_with_digits() {
+    // `Label('block-1')` and `Label('q42')` are fine — they have at
+    // least one non-digit character.
+    let root = tmpdir("label-ambig-mixed");
+    write(
+        &root,
+        "a.py",
+        "# Label('block-1')\nx = 1\n# EndLabel\n# Label('q42')\ny = 2\n# EndLabel\n",
+    );
+    let cfg = Config::from_jsonc_str(
+        r#"{ "patterns": { "ic": { "kind": "ifchange", "regex": "(unused)" } } }"#,
+    )
+    .unwrap();
+    let report = run_doctor_with_workspace(&root, &cfg).unwrap();
+    assert!(!report
+        .diagnostics
+        .iter()
+        .any(|d| d.check == "label.ambiguousName"));
+    fs::remove_dir_all(&root).unwrap();
+}
