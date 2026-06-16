@@ -25,6 +25,13 @@
 //     exportReferencesAsJsonCommand).
 //   - maxNodesPerLevel cap (this file: capLevel + TruncatedNode),
 //     wired to the `coderef.references.maxNodesPerLevel` setting.
+//
+// Shipped in v0.4:
+//   - Scan modes (workspace / openFiles / currentFile) +
+//     setScanMode command.
+//   - Mine filter (this file: isReferenceMine + filter wired to
+//     `coderef.references.filter` + `mineIdentities` settings +
+//     setFilter command).
 
 import * as path from "node:path";
 
@@ -317,6 +324,68 @@ export class ReferencesTreeProvider implements vscode.TreeDataProvider<Node> {
   }
 }
 
+/** Filter mode for the references browser. `all` shows every ref;
+ *  `mine` shows only those whose matched_text or any capture value
+ *  contains one of the identifiers in `coderef.references.mineIdentities`.
+ *  The identity-driven match is intentionally substring-based and
+ *  case-insensitive — the identifier list is short, the user-facing
+ *  use case is "show me my outstanding TODOs across the repo", and
+ *  the simplest predicate that surfaces the user-name in TODOs,
+ *  JIRA assignee captures, etc. wins.
+ */
+export type FilterMode = "all" | "mine";
+
+/** Read `coderef.references.filter`. Falls back to `all` on
+ *  missing / unknown values.
+ */
+export function filterModeSetting(): FilterMode {
+  const cfg = vscode.workspace.getConfiguration("coderef.references");
+  const raw = cfg.get<string>("filter", "all");
+  return raw === "mine" ? "mine" : "all";
+}
+
+/** Read `coderef.references.mineIdentities` (string array). Trimmed
+ *  and de-empty-stringed. The user might enter literal identifiers
+ *  (`alice`, `@alice`, `[email protected]`) — we don't transform them; the
+ *  match is a plain case-insensitive substring check.
+ */
+export function mineIdentitiesSetting(): string[] {
+  const cfg = vscode.workspace.getConfiguration("coderef.references");
+  const raw = cfg.get<unknown>("mineIdentities", []);
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((s): s is string => typeof s === "string")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
+/** Predicate for the Mine filter. Returns `true` when the ref's
+ *  `matched_text` or any of its capture values contains any of the
+ *  provided identifiers (case-insensitive substring match). When the
+ *  identifier list is empty, every ref is treated as Mine — there's
+ *  no other way to distinguish "yours" from "theirs", and treating
+ *  an unconfigured Mine filter as an empty result would be a
+ *  confusing UX. Pure function — testable.
+ */
+export function isReferenceMine(
+  ref: EngineReference,
+  identities: readonly string[],
+): boolean {
+  if (identities.length === 0) return true;
+  const haystacks: string[] = [ref.matched_text];
+  for (const v of Object.values(ref.captures)) haystacks.push(v);
+  const haystack = haystacks.join("\x00").toLowerCase();
+  return identities.some((id) => haystack.includes(id.toLowerCase()));
+}
+
+/** Apply the active filter (read from settings) to a reference set.
+ *  Returns a new array; the caller's slice is untouched. */
+export function applyFilter(refs: EngineReference[]): EngineReference[] {
+  if (filterModeSetting() === "all") return refs;
+  const ids = mineIdentitiesSetting();
+  return refs.filter((r) => isReferenceMine(r, ids));
+}
+
 /** Scan mode for the references browser (DESIGN §14.7). Determines
  *  which subset of files the next rescan walks. Sourced from the
  *  `coderef.references.scanMode` setting; defaults to `workspace`.
@@ -411,7 +480,7 @@ export async function rescanWorkspace(
       console.warn("coderef: skipped file in references scan", uri.toString(), err);
     }
   }
-  provider.setRefs(allRefs, folder.uri);
+  provider.setRefs(applyFilter(allRefs), folder.uri);
 }
 
 function extOf(fsPath: string): string | undefined {
@@ -689,6 +758,56 @@ export async function copyReferencesAsMarkdownCommand(
     );
   }
   return markdown;
+}
+
+/** `coderef.references.setFilter` command body. Quick-pick between
+ *  `all` and `mine`; persists the choice and triggers a rescan so
+ *  the tree reflects the new filter immediately. `api?` lets tests
+ *  inject mocks for the quick-pick + settings.update + rescan calls.
+ */
+export async function setFilterCommand(
+  rescan: () => void | Promise<void>,
+  api: {
+    pickFilter: () => Promise<FilterMode | undefined>;
+    setFilter: (mode: FilterMode) => Promise<void>;
+    showInfo: (msg: string) => void;
+  } = {
+    pickFilter: async () => {
+      const items: { label: string; description: string; mode: FilterMode }[] = [
+        {
+          label: "all",
+          description: "Show every reference (default)",
+          mode: "all",
+        },
+        {
+          label: "mine",
+          description: "Only refs matching coderef.references.mineIdentities",
+          mode: "mine",
+        },
+      ];
+      const picked = await vscode.window.showQuickPick(items, {
+        placeHolder: "coderef: references filter",
+        ignoreFocusOut: false,
+      });
+      return picked?.mode;
+    },
+    setFilter: async (mode) => {
+      const cfg = vscode.workspace.getConfiguration("coderef.references");
+      const target =
+        vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0
+          ? vscode.ConfigurationTarget.Workspace
+          : vscode.ConfigurationTarget.Global;
+      await cfg.update("filter", mode, target);
+    },
+    showInfo: (msg) => void vscode.window.showInformationMessage(msg),
+  },
+): Promise<FilterMode | undefined> {
+  const picked = await api.pickFilter();
+  if (!picked) return undefined;
+  await api.setFilter(picked);
+  api.showInfo(`coderef: references filter → ${picked}`);
+  await rescan();
+  return picked;
 }
 
 /** `coderef.references.setScanMode` command body. Pops a quick-pick
