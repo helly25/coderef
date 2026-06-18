@@ -921,3 +921,123 @@ fn doctor_label_ambiguous_name_silent_on_alphanumeric_with_digits() {
         .any(|d| d.check == "label.ambiguousName"));
     fs::remove_dir_all(&root).unwrap();
 }
+
+// ---------------------------------------------------------------------
+// label.orphanOpen / label.orphanClose (DESIGN §10.3 compat-only).
+// Fire only when at least one pattern has `label` configured.
+// ---------------------------------------------------------------------
+
+#[test]
+fn doctor_label_orphan_open_silent_without_per_pattern_label_config() {
+    // Stray `Label('foo')` with no matching close. No pattern has
+    // `label` set, so the doctor must NOT emit label.orphanOpen —
+    // the diagnostic is compat-only.
+    let root = tmpdir("label-orphan-no-config");
+    write(&root, "a.py", "# Label('foo')\nx = 1\n");
+    let cfg = Config::from_jsonc_str(
+        r#"{ "patterns": { "ic": { "kind": "ifchange", "regex": "(unused)" } } }"#,
+    )
+    .unwrap();
+    let report = run_doctor_with_workspace(&root, &cfg).unwrap();
+    assert!(!report
+        .diagnostics
+        .iter()
+        .any(|d| d.check == "label.orphanOpen"));
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn doctor_label_orphan_open_fires_when_a_pattern_has_label_configured() {
+    let root = tmpdir("label-orphan-fires");
+    write(&root, "a.py", "# Label('foo')\nx = 1\n");
+    let cfg = Config::from_jsonc_str(
+        r#"{
+            "patterns": {
+                "ic": {
+                    "kind": "ifchange",
+                    "regex": "(unused)",
+                    "label": {
+                        "open":  { "regex": "BEGIN_BLOCK\\((?<id>[^)]*)\\)" },
+                        "close": { "regex": "END_BLOCK" }
+                    }
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+    let report = run_doctor_with_workspace(&root, &cfg).unwrap();
+    let diag = report
+        .diagnostics
+        .iter()
+        .find(|d| d.check == "label.orphanOpen");
+    assert!(diag.is_some(), "got: {:#?}", report.diagnostics);
+    assert_eq!(
+        diag.unwrap().severity,
+        coderef_core::severity::Severity::Error
+    );
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn doctor_label_orphan_close_fires_on_stray_endlabel_with_pattern_label_configured() {
+    let root = tmpdir("label-orphan-close");
+    write(&root, "a.py", "x = 1\n# EndLabel\n");
+    let cfg = Config::from_jsonc_str(
+        r#"{
+            "patterns": {
+                "ic": {
+                    "kind": "ifchange",
+                    "regex": "(unused)",
+                    "label": {
+                        "open":  { "regex": "BEGIN_BLOCK\\((?<id>[^)]*)\\)" },
+                        "close": { "regex": "END_BLOCK" }
+                    }
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+    let report = run_doctor_with_workspace(&root, &cfg).unwrap();
+    assert!(report
+        .diagnostics
+        .iter()
+        .any(|d| d.check == "label.orphanClose"));
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn doctor_per_pattern_label_markers_pair_cleanly_no_orphans() {
+    // Configured `BEGIN_BLOCK(...)` / `END_BLOCK` open/close pair is
+    // matched correctly; no orphan diagnostics fire.
+    let root = tmpdir("label-paired");
+    write(
+        &root,
+        "a.py",
+        "# BEGIN_BLOCK(my-region)\nx = 1\n# END_BLOCK\n",
+    );
+    let cfg = Config::from_jsonc_str(
+        r#"{
+            "patterns": {
+                "ic": {
+                    "kind": "ifchange",
+                    "regex": "(unused)",
+                    "label": {
+                        "open":  { "regex": "BEGIN_BLOCK\\((?<id>[^)]*)\\)" },
+                        "close": { "regex": "END_BLOCK" }
+                    }
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+    let report = run_doctor_with_workspace(&root, &cfg).unwrap();
+    assert!(!report
+        .diagnostics
+        .iter()
+        .any(|d| d.check == "label.orphanOpen"));
+    assert!(!report
+        .diagnostics
+        .iter()
+        .any(|d| d.check == "label.orphanClose"));
+    fs::remove_dir_all(&root).unwrap();
+}

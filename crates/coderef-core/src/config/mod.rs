@@ -16,7 +16,9 @@ mod resolve;
 mod scope;
 mod verify;
 
-pub use self::pattern::{ActionConfig, ActionsConfig, Pattern, PatternKind, TargetSpec};
+pub use self::pattern::{
+    ActionConfig, ActionsConfig, LabelConfig, LabelMarker, Pattern, PatternKind, TargetSpec,
+};
 pub use self::resolve::{AnchorMode, CaseSensitivity, LocalResolveConfig};
 pub use self::scope::{
     resolve_commit_message_scope, CommitMessageScope, CommitMessageTag,

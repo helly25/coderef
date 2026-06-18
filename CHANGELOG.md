@@ -7,6 +7,34 @@ versions follow [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+### Added
+
+- **Per-pattern `patterns.<id>.label` config** (DESIGN §10.3). Each
+  `kind: "ifchange"` pattern can declare a compat-form open/close
+  marker pair (`label.open.regex` and `label.close.regex`) that the
+  parser recognises in addition to the canonical
+  `IfChange`/`ThenChange` and the global `Label`/`EndLabel`. Useful
+  for codebases mirroring `ebrevdo/ifttt-lint` or other
+  coupled-change tools with different keyword spellings (e.g.
+  `BEGIN_BLOCK(id)` / `END_BLOCK`). Configurable per-pattern, but
+  the marker recognition is global at scan time — any pattern's
+  configured markers are tried against every file.
+- **`label.orphanOpen` / `label.orphanClose` doctor diagnostics**
+  (DESIGN §10.3). Compat-only — they fire ONLY when at least one
+  pattern has `label` configured. Catches stray compat-form open
+  markers (`Label(...)` or per-pattern open) with no matching
+  close, and vice versa. Default `Error`. The canonical
+  `IfChange` / `ThenChange` orphans keep firing as
+  `parse-error/orphan-ifchange` and `parse-error/orphan-thenchange`
+  via the existing path.
+- Parser now tracks `MarkerForm::Canonical` vs
+  `MarkerForm::Compat` on every `IfChangeBlock` (hidden field —
+  doctor-internal). Used by the new orphan diagnostics to pick
+  the right Orphan* variant. Two new `MarkerParseError` variants
+  (`OrphanLabel`, `OrphanEndLabel`) replace the previous
+  conflation with `OrphanIfChange` / `OrphanThenChange` for
+  compat-form orphans.
+
 ## v0.4.0 — 2026-06-18
 
 ### Highlights

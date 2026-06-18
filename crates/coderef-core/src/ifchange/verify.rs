@@ -397,6 +397,8 @@ fn parse_error_kind(e: &MarkerParseError) -> &'static str {
     match e {
         MarkerParseError::OrphanIfChange { .. } => "orphan-ifchange",
         MarkerParseError::OrphanThenChange { .. } => "orphan-thenchange",
+        MarkerParseError::OrphanLabel { .. } => "orphan-label",
+        MarkerParseError::OrphanEndLabel { .. } => "orphan-endlabel",
         MarkerParseError::MalformedTarget { .. } => "malformed-target",
     }
 }
@@ -405,6 +407,8 @@ fn parse_error_file(e: &MarkerParseError) -> String {
     match e {
         MarkerParseError::OrphanIfChange { file, .. }
         | MarkerParseError::OrphanThenChange { file, .. }
+        | MarkerParseError::OrphanLabel { file, .. }
+        | MarkerParseError::OrphanEndLabel { file, .. }
         | MarkerParseError::MalformedTarget { file, .. } => file.clone(),
     }
 }
@@ -413,6 +417,8 @@ fn parse_error_line(e: &MarkerParseError) -> u32 {
     match e {
         MarkerParseError::OrphanIfChange { line, .. }
         | MarkerParseError::OrphanThenChange { line, .. }
+        | MarkerParseError::OrphanLabel { line, .. }
+        | MarkerParseError::OrphanEndLabel { line, .. }
         | MarkerParseError::MalformedTarget { line, .. } => *line,
     }
 }
@@ -435,6 +441,7 @@ mod tests {
             id: id.map(str::to_string),
             targets,
             no_verify_reason: None,
+            marker_form: super::super::parse::MarkerForm::Canonical,
         }
     }
 
@@ -582,6 +589,7 @@ mod tests {
                 label: "section-name".into(),
             }],
             no_verify_reason: None,
+            marker_form: super::super::parse::MarkerForm::Canonical,
         };
         let block_b = IfChangeBlock {
             file: "docs/x.md".into(),
@@ -590,6 +598,7 @@ mod tests {
             id: Some("section-name".into()),
             targets: vec![],
             no_verify_reason: None,
+            marker_form: super::super::parse::MarkerForm::Canonical,
         };
         // Diff: block_a changes; docs/x.md line 55 also changes
         // (inside block_b's range 50..60).
@@ -610,6 +619,7 @@ mod tests {
                 label: "section".into(),
             }],
             no_verify_reason: None,
+            marker_form: super::super::parse::MarkerForm::Canonical,
         };
         let block_b = IfChangeBlock {
             file: "docs/x.md".into(),
@@ -618,6 +628,7 @@ mod tests {
             id: Some("section".into()),
             targets: vec![],
             no_verify_reason: None,
+            marker_form: super::super::parse::MarkerForm::Canonical,
         };
         // Diff touches block_a + a *different* line in docs/x.md
         // (line 5 — outside block_b's [50, 60] range).
@@ -642,6 +653,7 @@ mod tests {
                 label: "nonexistent".into(),
             }],
             no_verify_reason: None,
+            marker_form: super::super::parse::MarkerForm::Canonical,
         };
         let cl = ChangedLines::from_pairs(&[("src/a.rs", &[(2, 2)])]);
         let r = verify_changes(&[block_a], &[], &cl);
@@ -725,6 +737,7 @@ mod tests {
                 flags: super::super::parse::GlobFlags::default(),
             }],
             no_verify_reason: None,
+            marker_form: super::super::parse::MarkerForm::Canonical,
         };
         let cl =
             ChangedLines::from_pairs(&[("src/a.rs", &[(2, 2)]), ("docs/security.md", &[(50, 50)])]);
@@ -744,6 +757,7 @@ mod tests {
                 flags: super::super::parse::GlobFlags::default(),
             }],
             no_verify_reason: None,
+            marker_form: super::super::parse::MarkerForm::Canonical,
         };
         // src/a.rs changed; no docs/*.md changed.
         let cl = ChangedLines::from_pairs(&[("src/a.rs", &[(2, 2)])]);
@@ -767,6 +781,7 @@ mod tests {
                 flags: super::super::parse::GlobFlags::default(),
             }],
             no_verify_reason: None,
+            marker_form: super::super::parse::MarkerForm::Canonical,
         };
         let cl = ChangedLines::from_pairs(&[
             ("src/a.rs", &[(2, 2)]),
@@ -853,6 +868,7 @@ mod tests {
                 },
             }],
             no_verify_reason: None,
+            marker_form: super::super::parse::MarkerForm::Canonical,
         };
         // a.rs changed, but no /docs/*.md file changed → glob misses.
         let cl = ChangedLines::from_pairs(&[("src/a.rs", &[(2, 2)])]);
@@ -876,6 +892,7 @@ mod tests {
                 flags: super::super::parse::GlobFlags::default(), // any, not soft
             }],
             no_verify_reason: None,
+            marker_form: super::super::parse::MarkerForm::Canonical,
         };
         let cl = ChangedLines::from_pairs(&[("src/a.rs", &[(2, 2)])]);
         let r = verify_changes(&[b], &[], &cl);
@@ -895,6 +912,7 @@ mod tests {
             id: Some("k".into()),
             targets: vec![],
             no_verify_reason: None,
+            marker_form: super::super::parse::MarkerForm::Canonical,
         };
         let b2 = IfChangeBlock {
             file: "b.rs".into(),
@@ -903,6 +921,7 @@ mod tests {
             id: Some("k".into()),
             targets: vec![],
             no_verify_reason: None,
+            marker_form: super::super::parse::MarkerForm::Canonical,
         };
         // a.rs changes; b.rs doesn't.
         let cl = ChangedLines::from_pairs(&[("a.rs", &[(2, 2)])]);
@@ -939,6 +958,7 @@ mod tests {
             id: None,
             targets,
             no_verify_reason: None,
+            marker_form: super::super::parse::MarkerForm::Canonical,
         }
     }
 

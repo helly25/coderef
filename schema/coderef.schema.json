@@ -166,6 +166,17 @@
           "additionalProperties": {
             "$ref": "#/definitions/Severity"
           }
+        },
+        "label": {
+          "description": "Compat-form marker spelling for the `IfChange`/`ThenChange` surface (DESIGN §10.3). When set on at least one `kind: \"ifchange\"` pattern, the parser additionally recognises the configured `open.regex` and `close.regex` as labelled-region markers alongside the canonical `IfChange`/`ThenChange` (and the global `Label`/`EndLabel` from #54). Useful for codebases mirroring `ebrevdo/ifttt-lint` or other coupled-change tools that use different keywords.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/LabelConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "additionalProperties": false
@@ -647,6 +658,46 @@
           ]
         }
       ]
+    },
+    "LabelConfig": {
+      "description": "Per-pattern compat-form marker spellings (DESIGN §10.3).\n\nBoth `open` and `close` are required if `label` is set; the parser validates this at config load via the `pattern.labelCompatMissing` doctor diagnostic.",
+      "type": "object",
+      "required": [
+        "close",
+        "open"
+      ],
+      "properties": {
+        "open": {
+          "description": "Open-marker regex (e.g. `r\"\\bLabel\\((?<id>[^)]*)\\)\"` or `r\"\\bBEGIN_BLOCK\\((?<id>[^)]*)\\)\"`). The `id` named group, if present, supplies the block's label name; without it the matched block is anonymous (Shape A only).",
+          "allOf": [
+            {
+              "$ref": "#/definitions/LabelMarker"
+            }
+          ]
+        },
+        "close": {
+          "description": "Close-marker regex (e.g. `r\"\\bEndLabel\\b\"`, `r\"\\bEND_BLOCK\\b\"`). Close markers don't carry an id — pairing is positional (next open ↔ next close).",
+          "allOf": [
+            {
+              "$ref": "#/definitions/LabelMarker"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "LabelMarker": {
+      "type": "object",
+      "required": [
+        "regex"
+      ],
+      "properties": {
+        "regex": {
+          "description": "`fancy-regex`-compatible marker regex. The parser compiles it at scan time; an invalid regex surfaces via the `pattern.labelRegexInvalid` doctor diagnostic.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
     }
   }
 }
