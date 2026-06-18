@@ -7,6 +7,38 @@ versions follow [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+## v0.4.0 — 2026-06-18
+
+### Highlights
+
+- **References-browser Mine filter** (#66) — workspace identity list
+  + per-ref substring match against matched text and capture
+  values; toggleable via the new `coderef.references.setFilter`
+  palette command.
+- **Multi-target hover alternates** (#65) — the HoverProvider lists
+  every other pattern that would also match the same `matched_text`
+  with the alternate's resolved target as a clickable link.
+
+### Workspace stats
+
+- Extension TS test count grew from 45 → 55 (Mine: 7 new tests;
+  hover alternates: 3 new tests).
+- 2 PRs merged in this cycle (#65 multi-target hover, #66 Mine
+  filter).
+
+### Deferred to v0.5
+
+- **Per-pattern `patterns.<id>.label` config** + `label.orphanOpen`
+  / `label.orphanClose` compat-only doctor diagnostics (DESIGN
+  §10.3). Requires a parser refactor (build marker regex set from
+  pattern configs; track per-block marker provenance) plus a real
+  design call on per-pattern file scoping.
+- **References-browser Drifted filter** (DESIGN §14.7). Requires
+  either subprocess plumbing (`coderef check --report json` from
+  the extension — brings CLI-on-PATH dependency) or exposing the
+  verifier through WASM (no HTTP in WASM today). Both are
+  real-design items, not "ship the smallest cut" candidates.
+
 ### Added
 
 - **References-browser Mine filter** (DESIGN §14.7 v0.3 deferred /
