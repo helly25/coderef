@@ -909,6 +909,7 @@ pub(super) fn check_label_orphan_close(
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub(super) fn check_label_duplicate_in_file(
     cfg: &Config,
     blocks: &[crate::ifchange::IfChangeBlock],
