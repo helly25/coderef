@@ -7,20 +7,92 @@ versions follow [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+## v0.5.0 — 2026-06-18
+
+### Highlights
+
+- **Per-pattern `patterns.<id>.label` config** + `label.orphanOpen`
+  / `label.orphanClose` doctor diagnostics (#68) — `kind:
+  "ifchange"` patterns can now declare a compat-form open/close
+  marker pair (e.g. `BEGIN_BLOCK(id)` / `END_BLOCK`) the parser
+  recognises alongside the canonical `IfChange`/`ThenChange` and
+  the global `Label`/`EndLabel`. Two new compat-only doctor
+  checks fire on stray open/close markers when at least one
+  pattern opts in.
+- **References-browser `Drifted` filter** (#69) — third filter
+  mode joins `all` / `mine`. Surfaces ifchange refs whose
+  enclosing IfChange/Label region in the same file is unbalanced.
+  The full DESIGN §10.14 checksum-drift backend remains
+  post-v0.4 backlog; this ship exposes the parse-time orphan
+  signal via a TS-side single-pass scanner — no new wasm
+  exports, no CLI subprocess.
+
+### Workspace stats
+
+- Extension TS test count grew 55 → 66 (Drifted filter: 14 new
+  tests for `computeOrphanLines` + `isReferenceDrifted` + the
+  `setFilterCommand` drifted-mode quick-pick).
+- Rust test count grew (34 → 38 doctor-pipeline integration
+  tests for the new `label.orphanOpen` / `label.orphanClose`
+  diagnostics; existing `OrphanIfChange`/`OrphanThenChange` test
+  expectations updated for the split into four variants).
+- Two new `MarkerParseError` variants (`OrphanLabel`,
+  `OrphanEndLabel`) — pre-1.0 coderef-core API; only internal
+  consumers (`coderef-cli`, `coderef-core-wasm`) updated in this
+  release cycle.
+- 2 PRs merged in this cycle (#68 per-pattern label config /
+  orphans, #69 Drifted filter).
+
+### Deferred — no v0.5 backlog
+
+v0.5 closes out the v0.4 deferral list. There's no enumerated
+v0.6 backlog: DESIGN §20.5 explicitly leaves the post-v0.4
+horizon open and waits for real-use signal before committing
+further scope. Open candidates documented there (checksum-drift,
+LSP server, JetBrains plugin, `extends:` mechanism, semantic
+response filtering, CodeLens, …) are picked up case-by-case if
+demand surfaces.
+
 ### Added
 
+- **Per-pattern `patterns.<id>.label` config** (DESIGN §10.3).
+  Each `kind: "ifchange"` pattern can declare a compat-form
+  open/close marker pair (`label.open.regex` and
+  `label.close.regex`) that the parser recognises in addition
+  to the canonical `IfChange`/`ThenChange` and the global
+  `Label`/`EndLabel`. Useful for codebases mirroring
+  `ebrevdo/ifttt-lint` or other coupled-change tools with
+  different keyword spellings (e.g. `BEGIN_BLOCK(id)` /
+  `END_BLOCK`). Configurable per-pattern, but the marker
+  recognition is global at scan time — any pattern's configured
+  markers are tried against every file.
+- **`label.orphanOpen` / `label.orphanClose` doctor diagnostics**
+  (DESIGN §10.3). Compat-only — they fire ONLY when at least
+  one pattern has `label` configured. Catches stray compat-form
+  open markers (`Label(...)` or per-pattern open) with no
+  matching close, and vice versa. Default `Error`. The
+  canonical `IfChange` / `ThenChange` orphans keep firing as
+  `parse-error/orphan-ifchange` and
+  `parse-error/orphan-thenchange` via the existing path.
+- Parser now tracks `MarkerForm::Canonical` vs
+  `MarkerForm::Compat` on every `IfChangeBlock` (hidden field —
+  doctor-internal). Used by the new orphan diagnostics to pick
+  the right Orphan* variant. Two new `MarkerParseError`
+  variants (`OrphanLabel`, `OrphanEndLabel`) replace the
+  previous conflation with `OrphanIfChange` /
+  `OrphanThenChange` for compat-form orphans.
 - **References-browser `Drifted` filter** (DESIGN §14.7.4). The
   `coderef.references.filter` setting / quick-pick gains a third
-  mode, `drifted`, alongside `all` and `mine`. With it active, the
-  tree shows only `kind: "ifchange"` references whose enclosing
-  IfChange/Label region in the same file is unbalanced — an open
-  marker with no matching close, or a stray close with no open.
-  Useful for "where are the ifchange markers that the parser
-  considers broken in this branch?". The full DESIGN §10.14
-  checksum-drift backend remains post-v0.4 backlog; this v0.5
-  surface exposes the parse-time orphan signal we already have
-  via a small TS-side single-pass scanner — no new wasm exports,
-  no CLI subprocess. 14 new unit tests in
+  mode, `drifted`, alongside `all` and `mine`. With it active,
+  the tree shows only `kind: "ifchange"` references whose
+  enclosing IfChange/Label region in the same file is unbalanced
+  — an open marker with no matching close, or a stray close
+  with no open. Useful for "where are the ifchange markers that
+  the parser considers broken in this branch?". The full DESIGN
+  §10.14 checksum-drift backend remains post-v0.4 backlog; this
+  v0.5 surface exposes the parse-time orphan signal we already
+  have via a small TS-side single-pass scanner — no new wasm
+  exports, no CLI subprocess. 14 new unit tests in
   `extension/src/referencesView.test.ts`.
 
 ## v0.4.0 — 2026-06-18
