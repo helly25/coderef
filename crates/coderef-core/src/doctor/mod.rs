@@ -198,9 +198,19 @@ pub fn run_doctor_with_workspace_and_commit_corpus(
     // references; scan them too so `coupled.composableTypo` and the
     // label.* family (DESIGN §10.3) have the right input.
     if crate::ifchange::ifchange_enabled(config) {
-        if let Ok((blocks, _parse_errors)) =
+        if let Ok((blocks, parse_errors)) =
             crate::ifchange::scan_workspace_blocks(root.as_ref(), config)
         {
+            // Compat-only label.orphanOpen / label.orphanClose: fire
+            // ONLY when at least one pattern has `label` configured
+            // (DESIGN §10.3 — these diagnostics describe a compat
+            // surface and would be confusing on configs that don't
+            // opt in).
+            let any_label_configured = config.patterns.values().any(|p| p.label.is_some());
+            if any_label_configured {
+                self::checks::check_label_orphan_open(config, &parse_errors, &mut additions);
+                self::checks::check_label_orphan_close(config, &parse_errors, &mut additions);
+            }
             self::checks::check_coupled_composable_typo(config, &blocks, &mut additions);
             self::checks::check_label_duplicate_in_file(config, &blocks, &mut additions);
             self::checks::check_label_unused(config, &blocks, &mut additions);

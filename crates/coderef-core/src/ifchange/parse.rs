@@ -44,6 +44,24 @@ static NO_VERIFY_RE: LazyLock<Regex> = LazyLock::new(|| {
         .expect("NoVerify marker regex is valid")
 });
 
+/// Which marker form opened (and closed) a block. Tracked so the
+/// doctor's `label.orphanOpen` / `label.orphanClose` diagnostics
+/// (DESIGN §10.3) can fire only for the compat-form (Label/EndLabel
+/// or per-pattern-configured) variants without polluting the
+/// canonical IfChange/ThenChange error path.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum MarkerForm {
+    /// `IfChange(...)` / `ThenChange(...)` — the canonical
+    /// shape. Default for any block whose open marker matched
+    /// `IF_CHANGE_RE`.
+    #[default]
+    Canonical,
+    /// `Label('name') ... EndLabel`, or any per-pattern-configured
+    /// open/close marker pair. Default for blocks opened via
+    /// `LABEL_OPEN_RE` or a configured `LabelConfig.open.regex`.
+    Compat,
+}
+
 /// One IfChange/ThenChange block found in a single file.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IfChangeBlock {
@@ -62,6 +80,12 @@ pub struct IfChangeBlock {
     /// `IfChange` line or the line immediately above it. The verifier
     /// honours this and skips violations for the block.
     pub no_verify_reason: Option<String>,
+    /// Which marker form opened this block (canonical
+    /// `IfChange`/`ThenChange` vs compat `Label`/`EndLabel` or
+    /// per-pattern-configured). Defaults to `Canonical`. See
+    /// [`MarkerForm`].
+    #[doc(hidden)]
+    pub marker_form: MarkerForm,
 }
 
 /// One parsed target token from a `ThenChange(...)` argument list.
@@ -157,6 +181,21 @@ pub enum MarkerParseError {
     OrphanIfChange { file: String, line: u32 },
     #[error("`{file}:{line}` has a `ThenChange` marker without a preceding open `IfChange`")]
     OrphanThenChange { file: String, line: u32 },
+    /// Compat-form variant of `OrphanIfChange`. The open marker came
+    /// from the `Label('name')` global form or a per-pattern
+    /// `label.open.regex` (DESIGN §10.3). Surfaced separately so the
+    /// doctor's `label.orphanOpen` diagnostic can be compat-only.
+    #[error(
+        "`{file}:{line}` has a `Label` / per-pattern open marker with no matching close marker"
+    )]
+    OrphanLabel { file: String, line: u32 },
+    /// Compat-form variant of `OrphanThenChange`. The close marker
+    /// came from `EndLabel` or a per-pattern `label.close.regex`.
+    /// Surfaced separately for `label.orphanClose`.
+    #[error(
+        "`{file}:{line}` has an `EndLabel` / per-pattern close marker without a preceding open"
+    )]
+    OrphanEndLabel { file: String, line: u32 },
     #[error("`{file}:{line}` has a malformed target token `{token}` in `ThenChange(...)`")]
     MalformedTarget {
         file: String,
@@ -165,16 +204,64 @@ pub enum MarkerParseError {
     },
 }
 
+/// Optional per-pattern compat-form marker regexes (DESIGN §10.3).
+/// When supplied, [`extract_blocks_with_markers`] recognises each
+/// `open.regex` as an additional open marker (alongside the canonical
+/// `IfChange` and global `Label`) and each `close.regex` as an
+/// additional close marker (alongside `ThenChange` and `EndLabel`).
+/// Blocks opened or closed via any of these extra regexes are tagged
+/// `MarkerForm::Compat` for downstream diagnostics.
+pub struct MarkerOverrides<'a> {
+    /// Extra open-marker regexes. Each entry's named group `id`, if
+    /// present, supplies the block's label name (like the canonical
+    /// `IfChange(id)` capture).
+    pub opens: &'a [Regex],
+    /// Extra close-marker regexes. Close markers don't carry an id —
+    /// pairing is positional.
+    pub closes: &'a [Regex],
+}
+
+impl MarkerOverrides<'_> {
+    /// Empty override set — equivalent to calling
+    /// [`extract_blocks`].
+    #[must_use]
+    pub fn none() -> Self {
+        Self {
+            opens: &[],
+            closes: &[],
+        }
+    }
+}
+
 /// Extract paired IfChange/ThenChange blocks from `content`. The file
 /// path is embedded into the returned blocks unchanged (the caller
 /// chooses absolute vs workspace-relative).
+///
+/// Recognises the default marker set (`IfChange/ThenChange` and the
+/// global compat-form `Label/EndLabel`). To add per-pattern compat
+/// markers, use [`extract_blocks_with_markers`].
 #[must_use]
 pub fn extract_blocks(content: &str, file: &str) -> MarkerParseReport {
+    extract_blocks_with_markers(content, file, &MarkerOverrides::none())
+}
+
+/// Like [`extract_blocks`] but additionally tries the open / close
+/// regexes in `extras`. Used by the workspace scanner to plumb
+/// per-pattern `LabelConfig` (DESIGN §10.3) into the parser.
+#[must_use]
+#[allow(clippy::too_many_lines)]
+pub fn extract_blocks_with_markers(
+    content: &str,
+    file: &str,
+    extras: &MarkerOverrides<'_>,
+) -> MarkerParseReport {
     let mut blocks = Vec::new();
     let mut errors = Vec::new();
 
-    // Pending open: line number + captured id, waiting for the next ThenChange.
-    let mut open: Option<(u32, Option<String>, Option<String>)> = None;
+    // Pending open: line, id, no-verify reason, marker-form. Form
+    // determines which Orphan* variant we emit if the block doesn't
+    // close.
+    let mut open: Option<(u32, Option<String>, Option<String>, MarkerForm)> = None;
     // Carries the previous line's NoVerify reason forward by exactly
     // one line, so a NoVerify *above* the IfChange line is honoured.
     let mut prev_no_verify: Option<String> = None;
@@ -190,38 +277,52 @@ pub fn extract_blocks(content: &str, file: &str) -> MarkerParseReport {
                 .unwrap_or_default()
         });
 
-        // Match an OPEN marker: `IfChange(...)` (canonical) or
-        // `Label(...)` (compat form). The two regexes don't collide —
-        // `\bIfChange` and `\bLabel` are distinct word starts, and
-        // neither matches inside the other (e.g. `EndLabel` has no
-        // word boundary before `Label`). Check IfChange first so the
-        // canonical form wins on the rare line that contains both.
-        let open_match = IF_CHANGE_RE
+        // Match an OPEN marker. Order matters: canonical
+        // `IfChange(...)` first, then global `Label(...)` (compat),
+        // then any per-pattern compat regexes in `extras.opens`.
+        // The keyword string is used by `balanced_id_from` to skip
+        // past the marker keyword when extracting an id with nested
+        // parens (Shape C). For per-pattern regexes we use the
+        // matched text length as a proxy since the parser doesn't
+        // know the keyword statically.
+        let mut open_match: Option<(fancy_regex::Captures<'_>, usize, MarkerForm)> = IF_CHANGE_RE
             .captures(line)
             .ok()
             .flatten()
-            .map(|c| (c, "IfChange"))
-            .or_else(|| {
-                LABEL_OPEN_RE
-                    .captures(line)
-                    .ok()
-                    .flatten()
-                    .map(|c| (c, "Label"))
-            });
+            .map(|c| (c, "IfChange".len(), MarkerForm::Canonical));
+        if open_match.is_none() {
+            open_match = LABEL_OPEN_RE
+                .captures(line)
+                .ok()
+                .flatten()
+                .map(|c| (c, "Label".len(), MarkerForm::Compat));
+        }
+        if open_match.is_none() {
+            for re in extras.opens {
+                if let Ok(Some(cap)) = re.captures(line) {
+                    let m0 = cap.get(0).expect("group 0 always present");
+                    // For per-pattern regexes, the "keyword length"
+                    // is the full first-match slice's byte length up
+                    // to the first `(` if any, else the full match.
+                    let full = m0.as_str();
+                    let kw_len = full.find('(').unwrap_or(full.len());
+                    open_match = Some((cap, kw_len, MarkerForm::Compat));
+                    break;
+                }
+            }
+        }
 
-        if let Some((cap, keyword)) = open_match {
+        if let Some((cap, kw_len, form)) = open_match {
             // Reject lines that *also* contain ThenChange/EndLabel on the
             // same line (would otherwise produce a degenerate block).
             // Per DESIGN, the markers occupy their own lines; we treat
-            // a same-line both-markers form as `OrphanIfChange`.
+            // a same-line both-markers form as `OrphanIfChange` (or
+            // its compat sibling `OrphanLabel`).
             if open.is_some() {
-                // Nested or overlapping IfChange — close the pending
+                // Nested or overlapping open — close the pending
                 // open as orphan-style error and keep going.
-                if let Some((open_line, _, _)) = open.take() {
-                    errors.push(MarkerParseError::OrphanIfChange {
-                        file: file.to_string(),
-                        line: open_line,
-                    });
+                if let Some((open_line, _, _, pending_form)) = open.take() {
+                    errors.push(orphan_open_error(file, open_line, pending_form));
                 }
             }
             // Capture the id with paren-balanced extraction so Shape C
@@ -229,43 +330,51 @@ pub fn extract_blocks(content: &str, file: &str) -> MarkerParseReport {
             // `)`. We can't do this in the regex (fancy-regex doesn't
             // support balanced groups portably); hand-rolled is small.
             // Fall back to the regex's capture for ids without nested
-            // parens.
+            // parens. The keyword-length is the byte offset from the
+            // match start to the first `(` (or full match for
+            // marker-only opens).
             let m0 = cap.get(0).expect("group 0 always present");
-            let id = balanced_id_from(line, m0.start(), keyword)
+            let id = balanced_id_from_len(line, m0.start(), kw_len)
                 .or_else(|| cap.name("id").map(|m| m.as_str().trim().to_string()));
             let id = id.map(|raw| strip_matching_quotes(raw.trim()).to_string());
             // Take the higher-priority NoVerify: same-line wins;
             // otherwise the line-above reason.
             let nv = this_no_verify.clone().or_else(|| prev_no_verify.clone());
-            open = Some((line_num, id, nv));
+            open = Some((line_num, id, nv, form));
             // Same-line NoVerify gets consumed by the just-opened
             // block; clear so it doesn't leak to a sibling later.
             prev_no_verify = None;
             continue;
         }
 
-        // Match a CLOSE marker: `ThenChange(targets)` (canonical, may
-        // carry targets) or `EndLabel` (compat form, never carries
-        // targets — `EndLabel(...)` would be malformed, not a target
-        // list). Check ThenChange first so the canonical form wins.
-        let close_targets_text = if let Ok(Some(cap)) = THEN_CHANGE_RE.captures(line) {
-            Some(
-                cap.name("targets")
-                    .map(|m| m.as_str().trim().to_string())
-                    .unwrap_or_default(),
-            )
-        } else if LABEL_CLOSE_RE.is_match(line).unwrap_or(false) {
-            Some(String::new())
-        } else {
-            None
-        };
+        // Match a CLOSE marker. Canonical `ThenChange(...)` may carry
+        // targets; the compat-form `EndLabel` + per-pattern regexes
+        // never do (close markers in the compat surface are
+        // delimiter-only). Order: ThenChange → EndLabel → extras.
+        let close_match: Option<(String, MarkerForm)> =
+            if let Ok(Some(cap)) = THEN_CHANGE_RE.captures(line) {
+                Some((
+                    cap.name("targets")
+                        .map(|m| m.as_str().trim().to_string())
+                        .unwrap_or_default(),
+                    MarkerForm::Canonical,
+                ))
+            } else if LABEL_CLOSE_RE.is_match(line).unwrap_or(false)
+                || extras
+                    .closes
+                    .iter()
+                    .any(|re| re.is_match(line).unwrap_or(false))
+            {
+                // Either the global `EndLabel` marker or any per-pattern
+                // configured close — both feed the compat-form path.
+                Some((String::new(), MarkerForm::Compat))
+            } else {
+                None
+            };
 
-        if let Some(targets_text) = close_targets_text {
-            let Some((open_line, id, nv_reason)) = open.take() else {
-                errors.push(MarkerParseError::OrphanThenChange {
-                    file: file.to_string(),
-                    line: line_num,
-                });
+        if let Some((targets_text, close_form)) = close_match {
+            let Some((open_line, id, nv_reason, open_form)) = open.take() else {
+                errors.push(orphan_close_error(file, line_num, close_form));
                 prev_no_verify = this_no_verify;
                 continue;
             };
@@ -284,6 +393,13 @@ pub fn extract_blocks(content: &str, file: &str) -> MarkerParseReport {
                     }),
                 }
             }
+            // The block's marker_form is Compat if either the open
+            // *or* the close came from the compat surface. Canonical
+            // is only when BOTH were canonical.
+            let block_form = match (open_form, close_form) {
+                (MarkerForm::Canonical, MarkerForm::Canonical) => MarkerForm::Canonical,
+                _ => MarkerForm::Compat,
+            };
             blocks.push(IfChangeBlock {
                 file: file.to_string(),
                 line_start: open_line,
@@ -291,6 +407,7 @@ pub fn extract_blocks(content: &str, file: &str) -> MarkerParseReport {
                 id: id.filter(|s| !s.is_empty()),
                 targets,
                 no_verify_reason: nv_reason,
+                marker_form: block_form,
             });
             prev_no_verify = None;
             continue;
@@ -300,15 +417,42 @@ pub fn extract_blocks(content: &str, file: &str) -> MarkerParseReport {
         prev_no_verify = this_no_verify;
     }
 
-    // Leftover open: an IfChange with no closing ThenChange.
-    if let Some((open_line, _, _)) = open {
-        errors.push(MarkerParseError::OrphanIfChange {
-            file: file.to_string(),
-            line: open_line,
-        });
+    // Leftover open: no closing marker. Emit with the form that
+    // opened it (compat opens get OrphanLabel, canonical get
+    // OrphanIfChange).
+    if let Some((open_line, _, _, pending_form)) = open {
+        errors.push(orphan_open_error(file, open_line, pending_form));
     }
 
     MarkerParseReport { blocks, errors }
+}
+
+/// Convenience: pick the right OrphanOpen-style variant for a form.
+fn orphan_open_error(file: &str, line: u32, form: MarkerForm) -> MarkerParseError {
+    match form {
+        MarkerForm::Canonical => MarkerParseError::OrphanIfChange {
+            file: file.to_string(),
+            line,
+        },
+        MarkerForm::Compat => MarkerParseError::OrphanLabel {
+            file: file.to_string(),
+            line,
+        },
+    }
+}
+
+/// Convenience: pick the right OrphanClose-style variant for a form.
+fn orphan_close_error(file: &str, line: u32, form: MarkerForm) -> MarkerParseError {
+    match form {
+        MarkerForm::Canonical => MarkerParseError::OrphanThenChange {
+            file: file.to_string(),
+            line,
+        },
+        MarkerForm::Compat => MarkerParseError::OrphanEndLabel {
+            file: file.to_string(),
+            line,
+        },
+    }
 }
 
 /// Split a `ThenChange(...)` arg list on commas. Commas inside `{...}`
@@ -401,10 +545,10 @@ fn strip_glob_flag(raw: &str) -> Result<(&str, Option<GlobFlags>), ()> {
 /// Handles nested parens so `IfChange(JIRA(PROJ-1234))` yields
 /// `JIRA(PROJ-1234)` — what the v0.2 marker regex `[^)]*` truncated
 /// at the first `)`.
-fn balanced_id_from(line: &str, marker_start: usize, keyword: &str) -> Option<String> {
+fn balanced_id_from_len(line: &str, marker_start: usize, keyword_len: usize) -> Option<String> {
     // Skip past the matched keyword (e.g. `IfChange`, `Label`) — the
     // regex already matched these chars, so just advance the index.
-    let after_keyword = marker_start.checked_add(keyword.len())?;
+    let after_keyword = marker_start.checked_add(keyword_len)?;
     let bytes = line.as_bytes();
     if bytes.get(after_keyword) != Some(&b'(') {
         return None;
@@ -1230,8 +1374,10 @@ x
 
     #[test]
     fn test_orphan_endlabel_reported() {
-        // EndLabel with no preceding open marker — same OrphanThenChange
-        // error path as a stray ThenChange.
+        // EndLabel with no preceding open marker — emits the
+        // compat-form OrphanEndLabel variant (v0.5: per-pattern label
+        // config tracking) so the doctor can surface this distinctly
+        // from a stray canonical `ThenChange`.
         let src = "\
 x
 // EndLabel
@@ -1241,14 +1387,15 @@ x
         assert_eq!(report.errors.len(), 1);
         assert!(matches!(
             report.errors[0],
-            MarkerParseError::OrphanThenChange { .. }
+            MarkerParseError::OrphanEndLabel { .. }
         ));
     }
 
     #[test]
     fn test_orphan_label_reported() {
-        // Label without matching EndLabel/ThenChange — same
-        // OrphanIfChange error as an open IfChange that never closes.
+        // `Label` without a matching close — emits the compat-form
+        // OrphanLabel variant. v0.5 split from OrphanIfChange so the
+        // doctor's `label.orphanOpen` diagnostic can be compat-only.
         let src = "\
 // Label('foo')
 x
@@ -1258,7 +1405,7 @@ x
         assert_eq!(report.errors.len(), 1);
         assert!(matches!(
             report.errors[0],
-            MarkerParseError::OrphanIfChange { .. }
+            MarkerParseError::OrphanLabel { .. }
         ));
     }
 

@@ -831,6 +831,84 @@ pub(super) fn check_commit_message_required_never_fires(
 /// lookups — the second block silently wins — so this is `Error`
 /// by default.
 #[cfg(not(target_arch = "wasm32"))]
+/// `label.orphanOpen` — a compat-form open marker (`Label('...')`
+/// global form, or a per-pattern `label.open.regex` match) with no
+/// matching close in the same file (DESIGN §10.3). Caller gates this
+/// on "at least one pattern has `label` configured" — without that
+/// gate, the diagnostic would emit on plain `Label` strings that
+/// users intend as identifiers, not markers. Default `Error`.
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn check_label_orphan_open(
+    cfg: &Config,
+    parse_errors: &[crate::ifchange::MarkerParseError],
+    out: &mut Vec<Diagnostic>,
+) {
+    let sev = cfg
+        .severity
+        .get("label.orphanOpen")
+        .copied()
+        .unwrap_or(Severity::Error);
+    if sev == Severity::Off {
+        return;
+    }
+    for e in parse_errors {
+        if let crate::ifchange::MarkerParseError::OrphanLabel { file, line } = e {
+            out.push(Diagnostic {
+                check: "label.orphanOpen".into(),
+                severity: sev,
+                pattern_id: None,
+                message: format!(
+                    "`{file}:{line}` has a compat-form open marker with no matching close — add an \
+                     `EndLabel` (or the configured close form) below"
+                ),
+                hint: Some(
+                    "if this is intentional (e.g. the open marker is text inside a string \
+                     literal), narrow the pattern's `label.open.regex` so it doesn't match here"
+                        .into(),
+                ),
+            });
+        }
+    }
+}
+
+/// `label.orphanClose` — sibling of `label.orphanOpen` for stray
+/// close markers (`EndLabel` global, or per-pattern `label.close.regex`)
+/// without a preceding open. Same compat-only gating as
+/// `label.orphanOpen`.
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn check_label_orphan_close(
+    cfg: &Config,
+    parse_errors: &[crate::ifchange::MarkerParseError],
+    out: &mut Vec<Diagnostic>,
+) {
+    let sev = cfg
+        .severity
+        .get("label.orphanClose")
+        .copied()
+        .unwrap_or(Severity::Error);
+    if sev == Severity::Off {
+        return;
+    }
+    for e in parse_errors {
+        if let crate::ifchange::MarkerParseError::OrphanEndLabel { file, line } = e {
+            out.push(Diagnostic {
+                check: "label.orphanClose".into(),
+                severity: sev,
+                pattern_id: None,
+                message: format!(
+                    "`{file}:{line}` has a compat-form close marker without a preceding open — add \
+                     a `Label(...)` (or the configured open form) above"
+                ),
+                hint: Some(
+                    "if this is intentional, narrow the pattern's `label.close.regex` so it \
+                     doesn't match here"
+                        .into(),
+                ),
+            });
+        }
+    }
+}
+
 pub(super) fn check_label_duplicate_in_file(
     cfg: &Config,
     blocks: &[crate::ifchange::IfChangeBlock],

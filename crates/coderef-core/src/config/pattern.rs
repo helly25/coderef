@@ -106,6 +106,47 @@ pub struct Pattern {
     /// `Severity`. See `DESIGN.md` §5.4.3, §9.1.
     #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
     pub severity: IndexMap<String, Severity>,
+
+    /// Compat-form marker spelling for the `IfChange`/`ThenChange`
+    /// surface (DESIGN §10.3). When set on at least one
+    /// `kind: "ifchange"` pattern, the parser additionally recognises
+    /// the configured `open.regex` and `close.regex` as labelled-region
+    /// markers alongside the canonical `IfChange`/`ThenChange` (and the
+    /// global `Label`/`EndLabel` from #54). Useful for codebases
+    /// mirroring `ebrevdo/ifttt-lint` or other coupled-change tools
+    /// that use different keywords.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<LabelConfig>,
+}
+
+/// Per-pattern compat-form marker spellings (DESIGN §10.3).
+///
+/// Both `open` and `close` are required if `label` is set; the
+/// parser validates this at config load via the
+/// `pattern.labelCompatMissing` doctor diagnostic.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct LabelConfig {
+    /// Open-marker regex (e.g. `r"\bLabel\((?<id>[^)]*)\)"` or
+    /// `r"\bBEGIN_BLOCK\((?<id>[^)]*)\)"`). The `id` named group, if
+    /// present, supplies the block's label name; without it the
+    /// matched block is anonymous (Shape A only).
+    pub open: LabelMarker,
+    /// Close-marker regex (e.g. `r"\bEndLabel\b"`,
+    /// `r"\bEND_BLOCK\b"`). Close markers don't carry an id —
+    /// pairing is positional (next open ↔ next close).
+    pub close: LabelMarker,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct LabelMarker {
+    /// `fancy-regex`-compatible marker regex. The parser compiles it
+    /// at scan time; an invalid regex surfaces via the
+    /// `pattern.labelRegexInvalid` doctor diagnostic.
+    pub regex: String,
 }
 
 /// One target in a multi-target pattern. See `DESIGN.md` §5.3.1 (v0.3).
