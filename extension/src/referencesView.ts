@@ -324,16 +324,23 @@ export class ReferencesTreeProvider implements vscode.TreeDataProvider<Node> {
   }
 }
 
-/** Filter mode for the references browser. `all` shows every ref;
- *  `mine` shows only those whose matched_text or any capture value
- *  contains one of the identifiers in `coderef.references.mineIdentities`.
- *  The identity-driven match is intentionally substring-based and
- *  case-insensitive — the identifier list is short, the user-facing
- *  use case is "show me my outstanding TODOs across the repo", and
- *  the simplest predicate that surfaces the user-name in TODOs,
- *  JIRA assignee captures, etc. wins.
+/** Filter mode for the references browser.
+ *
+ *  - `all`     — every ref (default).
+ *  - `mine`    — refs whose matched_text or any capture value contains
+ *                one of the identifiers in
+ *                `coderef.references.mineIdentities` (case-insensitive
+ *                substring).
+ *  - `drifted` — `pattern_kind === "ifchange"` refs whose enclosing
+ *                IfChange/Label region in the same file is unbalanced
+ *                (open without close, or close without open). The
+ *                full DESIGN.md §10.14 checksum-drift backend is
+ *                post-v0.4 backlog; this v0.5 surface exposes the
+ *                parse-time orphan signal we already have, so users
+ *                can spot stale ifchange markers without leaving the
+ *                tree.
  */
-export type FilterMode = "all" | "mine";
+export type FilterMode = "all" | "mine" | "drifted";
 
 /** Read `coderef.references.filter`. Falls back to `all` on
  *  missing / unknown values.
@@ -341,7 +348,9 @@ export type FilterMode = "all" | "mine";
 export function filterModeSetting(): FilterMode {
   const cfg = vscode.workspace.getConfiguration("coderef.references");
   const raw = cfg.get<string>("filter", "all");
-  return raw === "mine" ? "mine" : "all";
+  if (raw === "mine") return "mine";
+  if (raw === "drifted") return "drifted";
+  return "all";
 }
 
 /** Read `coderef.references.mineIdentities` (string array). Trimmed
@@ -378,12 +387,110 @@ export function isReferenceMine(
   return identities.some((id) => haystack.includes(id.toLowerCase()));
 }
 
+/** Per-file drift sites computed for the Drifted filter — a set of
+ *  1-based line numbers that the parser considers orphan-bearing.
+ *  Keyed by the same `file` string the engine attaches to each
+ *  `EngineReference`. */
+export type DriftSites = Map<string, Set<number>>;
+
+/** Compute orphan-marker line numbers in `content` using a single
+ *  pass that mirrors the Rust parser's `extract_blocks` semantics
+ *  for the v0.5 Drifted filter:
+ *
+ *    - `IfChange(<id>)` or `IfChange` opens a coupled-change block.
+ *    - `ThenChange` (with or without targets) closes it.
+ *    - `Label(<id>)` (PR #54 alternate spelling) opens a labelled
+ *      region.
+ *    - `EndLabel` closes it.
+ *
+ *  Pairing is greedy: the next close consumes the most recent open.
+ *  Lines that contain a marker but leave the file unbalanced — open
+ *  with no later close, close with no earlier open — are added to
+ *  the returned set. Per-pattern compat markers (Pattern.label
+ *  config, PR #68) are NOT exercised here on purpose: v0.5 keeps
+ *  the TS heuristic config-free and orphan detection on the
+ *  canonical surface. When DESIGN §10.14 (checksum drift) ships,
+ *  this function is replaced by a wasm-side workspace scan.
+ *
+ *  Pure function — testable. Returns 1-based line numbers because
+ *  `EngineReference.line` is also 1-based.
+ */
+export function computeOrphanLines(content: string): Set<number> {
+  const lines = content.split(/\r?\n/);
+  const orphans = new Set<number>();
+  type OpenMarker = { line: number; kind: "ifchange" | "label" };
+  const stack: OpenMarker[] = [];
+  const openIfChange = /(?<![A-Za-z0-9_])IfChange\b/;
+  const openLabel = /(?<![A-Za-z0-9_])Label\s*\(/;
+  const closeThenChange = /(?<![A-Za-z0-9_])ThenChange\b/;
+  const closeEndLabel = /(?<![A-Za-z0-9_])EndLabel\b/;
+  for (let i = 0; i < lines.length; i++) {
+    const lineNo = i + 1;
+    const text = lines[i] ?? "";
+    // Closes first — a `ThenChange` on a line takes precedence over
+    // an open marker also present. Pop the most recent compatible
+    // open; if nothing's open, the close is orphaned.
+    if (closeThenChange.test(text)) {
+      let popped = false;
+      for (let j = stack.length - 1; j >= 0; j--) {
+        if (stack[j]!.kind === "ifchange") {
+          stack.splice(j, 1);
+          popped = true;
+          break;
+        }
+      }
+      if (!popped) orphans.add(lineNo);
+    } else if (closeEndLabel.test(text)) {
+      let popped = false;
+      for (let j = stack.length - 1; j >= 0; j--) {
+        if (stack[j]!.kind === "label") {
+          stack.splice(j, 1);
+          popped = true;
+          break;
+        }
+      }
+      if (!popped) orphans.add(lineNo);
+    } else if (openIfChange.test(text)) {
+      stack.push({ line: lineNo, kind: "ifchange" });
+    } else if (openLabel.test(text)) {
+      stack.push({ line: lineNo, kind: "label" });
+    }
+  }
+  // Whatever's still on the stack at EOF is an unclosed open.
+  for (const open of stack) orphans.add(open.line);
+  return orphans;
+}
+
+/** Predicate for the Drifted filter. A ref qualifies when its
+ *  pattern kind is `ifchange` and its `(file, line)` lies on a line
+ *  the orphan-pass flagged. Pure function — testable. */
+export function isReferenceDrifted(
+  ref: EngineReference,
+  driftByFile: DriftSites,
+): boolean {
+  if (ref.pattern_kind !== "ifchange") return false;
+  const lines = driftByFile.get(ref.file);
+  if (!lines) return false;
+  return lines.has(ref.line);
+}
+
 /** Apply the active filter (read from settings) to a reference set.
- *  Returns a new array; the caller's slice is untouched. */
-export function applyFilter(refs: EngineReference[]): EngineReference[] {
-  if (filterModeSetting() === "all") return refs;
-  const ids = mineIdentitiesSetting();
-  return refs.filter((r) => isReferenceMine(r, ids));
+ *  Returns a new array; the caller's slice is untouched. `ctx`
+ *  carries any pre-computed state (currently just the per-file
+ *  drift map) so the predicate avoids re-scanning file content. */
+export function applyFilter(
+  refs: EngineReference[],
+  ctx?: { driftByFile?: DriftSites },
+): EngineReference[] {
+  const mode = filterModeSetting();
+  if (mode === "all") return refs;
+  if (mode === "mine") {
+    const ids = mineIdentitiesSetting();
+    return refs.filter((r) => isReferenceMine(r, ids));
+  }
+  // drifted
+  const driftByFile = ctx?.driftByFile ?? new Map<string, Set<number>>();
+  return refs.filter((r) => isReferenceDrifted(r, driftByFile));
 }
 
 /** Scan mode for the references browser (DESIGN §14.7). Determines
@@ -467,20 +574,30 @@ export async function rescanWorkspace(
   const mode = scanModeSetting();
   const uris = await collectScanUris(mode, excludeGlob);
   const allRefs: EngineReference[] = [];
+  // Build the drift map alongside the scan only if the active filter
+  // needs it — orphan detection requires re-reading every file's
+  // text once, so we skip the work in `all` / `mine` modes.
+  const filter = filterModeSetting();
+  const driftByFile: DriftSites = new Map();
   for (const uri of uris) {
     try {
       const doc = await vscode.workspace.openTextDocument(uri);
       const ext = extOf(doc.uri.fsPath);
       const rel = vscode.workspace.asRelativePath(uri, false);
-      const refs = scanBuffer(doc.getText(), config.config, ext, rel);
+      const text = doc.getText();
+      const refs = scanBuffer(text, config.config, ext, rel);
       allRefs.push(...refs);
+      if (filter === "drifted") {
+        const lines = computeOrphanLines(text);
+        if (lines.size > 0) driftByFile.set(rel, lines);
+      }
     } catch (err) {
       // Skip files that can't be read (binary, oversized). The browser
       // is best-effort.
       console.warn("coderef: skipped file in references scan", uri.toString(), err);
     }
   }
-  provider.setRefs(applyFilter(allRefs), folder.uri);
+  provider.setRefs(applyFilter(allRefs, { driftByFile }), folder.uri);
 }
 
 function extOf(fsPath: string): string | undefined {
@@ -783,6 +900,11 @@ export async function setFilterCommand(
           label: "mine",
           description: "Only refs matching coderef.references.mineIdentities",
           mode: "mine",
+        },
+        {
+          label: "drifted",
+          description: "Only ifchange refs inside unbalanced IfChange / Label regions",
+          mode: "drifted",
         },
       ];
       const picked = await vscode.window.showQuickPick(items, {
