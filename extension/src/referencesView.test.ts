@@ -335,6 +335,115 @@ test("setFilterCommand returns undefined and skips update when the user cancels"
   assert.equal(rescanCalled, 0);
 });
 
+test("setFilterCommand persists the drifted mode and rescans", async () => {
+  let rescanCalled = 0;
+  let updated: string | undefined;
+  let info: string | undefined;
+  const result = await referencesView.setFilterCommand(
+    () => {
+      rescanCalled += 1;
+    },
+    {
+      pickFilter: async () => "drifted",
+      setFilter: async (m) => {
+        updated = m;
+      },
+      showInfo: (msg) => {
+        info = msg;
+      },
+    },
+  );
+  assert.equal(result, "drifted");
+  assert.equal(updated, "drifted");
+  assert.equal(rescanCalled, 1);
+  assert.match(info ?? "", /drifted/);
+});
+
+// ---------------------------------------------------------------------
+// computeOrphanLines — v0.5 Drifted-filter orphan detector.
+// ---------------------------------------------------------------------
+
+test("computeOrphanLines returns empty when the file has no markers", () => {
+  const text = "fn main() {\n  let x = 1;\n}\n";
+  const orphans = referencesView.computeOrphanLines(text);
+  assert.deepEqual([...orphans], []);
+});
+
+test("computeOrphanLines returns empty when IfChange and ThenChange are balanced", () => {
+  const text = ["// IfChange", "let a = 1;", "// ThenChange(/peer)"].join("\n");
+  const orphans = referencesView.computeOrphanLines(text);
+  assert.deepEqual([...orphans], []);
+});
+
+test("computeOrphanLines flags an unclosed IfChange open as drifted", () => {
+  // IfChange on line 2, no closing ThenChange anywhere in the file.
+  const text = ["fn main() {", "  // IfChange", "  let a = 1;", "}"].join("\n");
+  const orphans = referencesView.computeOrphanLines(text);
+  assert.deepEqual([...orphans], [2]);
+});
+
+test("computeOrphanLines flags a stray ThenChange close as drifted", () => {
+  // ThenChange on line 1 with no preceding IfChange.
+  const text = ["// ThenChange(/peer)", "let a = 1;"].join("\n");
+  const orphans = referencesView.computeOrphanLines(text);
+  assert.deepEqual([...orphans], [1]);
+});
+
+test("computeOrphanLines treats Label / EndLabel like IfChange / ThenChange", () => {
+  // Open Label on line 2, no EndLabel — line 2 is orphan.
+  const text = ["fn main() {", "  // Label(my-region)", "  let a = 1;", "}"].join("\n");
+  const orphans = referencesView.computeOrphanLines(text);
+  assert.deepEqual([...orphans], [2]);
+});
+
+test("computeOrphanLines pairs Label only with EndLabel (not ThenChange)", () => {
+  // Label opens at line 1; a stray ThenChange at line 2 doesn't pair
+  // with a label — so both lines are orphan.
+  const text = ["// Label(x)", "// ThenChange(/peer)"].join("\n");
+  const orphans = referencesView.computeOrphanLines(text);
+  assert.deepEqual([...orphans].sort((a, b) => a - b), [1, 2]);
+});
+
+test("isReferenceDrifted is false for non-ifchange refs even when the line drifts", () => {
+  const ref = r({
+    pattern_kind: "url",
+    file: "src/lib.rs",
+    line: 5,
+  });
+  const drift: referencesView.DriftSites = new Map([["src/lib.rs", new Set([5])]]);
+  assert.equal(referencesView.isReferenceDrifted(ref, drift), false);
+});
+
+test("isReferenceDrifted is true for an ifchange ref on a drifted line", () => {
+  const ref = r({
+    pattern_kind: "ifchange",
+    file: "src/lib.rs",
+    line: 5,
+  });
+  const drift: referencesView.DriftSites = new Map([["src/lib.rs", new Set([3, 5, 9])]]);
+  assert.equal(referencesView.isReferenceDrifted(ref, drift), true);
+});
+
+test("isReferenceDrifted is false for an ifchange ref on a non-drifted line", () => {
+  const ref = r({
+    pattern_kind: "ifchange",
+    file: "src/lib.rs",
+    line: 5,
+  });
+  const drift: referencesView.DriftSites = new Map([["src/lib.rs", new Set([3, 9])]]);
+  assert.equal(referencesView.isReferenceDrifted(ref, drift), false);
+});
+
+test("isReferenceDrifted handles files absent from the drift map", () => {
+  const ref = r({
+    pattern_kind: "ifchange",
+    file: "src/lib.rs",
+    line: 5,
+  });
+  const drift: referencesView.DriftSites = new Map();
+  assert.equal(referencesView.isReferenceDrifted(ref, drift), false);
+});
+
 // ---------------------------------------------------------------------
 // setScanModeCommand — quick-pick + settings.update + rescan. Uses
 // the injectable `api` parameter so we exercise the pure choreography

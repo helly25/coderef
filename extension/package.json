@@ -54,10 +54,11 @@
         "coderef.references.filter": {
           "type": "string",
           "default": "all",
-          "enum": ["all", "mine"],
+          "enum": ["all", "mine", "drifted"],
           "enumDescriptions": [
             "Show every reference in the tree (default).",
-            "Only show references whose matched text or capture values contain one of `coderef.references.mineIdentities` (case-insensitive substring match)."
+            "Only show references whose matched text or capture values contain one of `coderef.references.mineIdentities` (case-insensitive substring match).",
+            "Only show ifchange references whose enclosing IfChange/Label region in the same file is unbalanced — i.e. an open marker without a matching close, or a stray close without an open. The full checksum-drift backend designed in DESIGN.md §10.14 is post-v0.4 backlog; this v0.5 filter surfaces the orphan signal the parser already emits."
           ],
           "description": "Active filter applied to the references browser tree. Switch via the `coderef: Set references filter` palette command."
         },
@@ -111,7 +112,7 @@
       },
       {
         "command": "coderef.references.setFilter",
-        "title": "coderef: Set references filter (all / mine)",
+        "title": "coderef: Set references filter (all / mine / drifted)",
         "category": "coderef"
       }
     ],
